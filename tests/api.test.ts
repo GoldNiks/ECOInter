@@ -101,6 +101,9 @@ test('imported restricted offers stay out of opportunities and route searches', 
   assert.equal(routes.statusCode, 200, routes.body);
   assert.deepEqual(routes.json().routes, []);
   assert.equal(routes.json().excludedOffers, 1);
+
+  const removed = await app.inject({ method: 'DELETE', url: `/api/servers/${serverId}` });
+  assert.equal(removed.statusCode, 200, removed.body);
 });
 
 test('server can be created and deleted through the API', async () => {
