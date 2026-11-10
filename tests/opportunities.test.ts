@@ -86,7 +86,7 @@ test('route-specific minimum ROI filters negligible but positive loops', () => {
   assert.equal(unfiltered[0]?.netProfit, '1');
 });
 
-test('capital above the available first lot preserves the unspent starting-currency reserve', () =>
+test('capital above the available first lot preserves the unspent starting-currency reserve', () => {
   const found = findMultiStepRoutes(routeFixture, {
     ...options, startingCapitalByCurrency: { RELAX: '1000' },
   }, Date.parse(now));
