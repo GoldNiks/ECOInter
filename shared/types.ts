@@ -15,6 +15,11 @@ export interface MarketOffer {
   quoteKind: QuoteKind;
   observedAt: string;
   sourceId?: string;
+  storeId?: string;
+  storeName?: string;
+  /** False when the destination store's storage is known to reject this item or has unverified profession rules. */
+  tradeAllowed?: boolean;
+  tradeRestriction?: string;
 }
 
 export interface FeePolicy {
