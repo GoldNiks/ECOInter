@@ -37,6 +37,11 @@ export interface FeePolicy {
   sellFixed: string;
 }
 
+export interface StoreLocation {
+  x?: number;
+  z?: number;
+}
+
 export interface AnalysisOptions {
   maxOperations: number;
   maxUniqueItems: number;
@@ -51,6 +56,10 @@ export interface AnalysisOptions {
   startingCapitalByCurrency?: Record<string, string>;
   feesByServer?: Record<string, FeePolicy>;
   maxQuoteAgeSeconds: number;
+  /** Eco world coordinates keyed by serverId::storeId (or store name fallback). */
+  storeLocations?: Record<string, StoreLocation>;
+  /** Exact item names manually confirmed as accepted by a restricted store. */
+  storeAcceptedItems?: Record<string, string[]>;
 }
 
 export interface DirectOpportunity {
@@ -70,6 +79,12 @@ export interface DirectOpportunity {
   observedAt: string;
   buyOfferIds: string[];
   sellOfferIds: string[];
+  buyStoreId?: string;
+  buyStoreName?: string;
+  sellStoreId?: string;
+  sellStoreName?: string;
+  distanceUnits?: number | null;
+  offerCount?: number;
 }
 
 export interface InterserverDifference {
@@ -108,6 +123,12 @@ export interface RouteLeg {
   sellOfferId: string;
   buyOfferIds: string[];
   sellOfferIds: string[];
+  buyStoreId?: string;
+  buyStoreName?: string;
+  sellStoreId?: string;
+  sellStoreName?: string;
+  /** Straight-line distance from the purchase store to the sale store, in Eco map units. */
+  distanceUnits?: number | null;
 }
 
 export interface MultiStepOpportunity {
@@ -125,6 +146,9 @@ export interface MultiStepOpportunity {
   quoteKind: QuoteKind;
   observedAt: string;
   capitalAssumed: boolean;
+  /** Total known route travel, including transfers between consecutive stores. */
+  distanceUnits?: number | null;
+  offerCount?: number;
 }
 
 export type Opportunity = DirectOpportunity | InterserverDifference | MultiStepOpportunity;
