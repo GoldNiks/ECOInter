@@ -6,7 +6,7 @@ import {
   Server, SlidersHorizontal, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import { api } from './lib/api';
-import type { AnalysisOptions, Opportunity, ServerRecord } from '../shared/types';
+import type { AnalysisOptions, Opportunity, RestrictedOfferSummary, ServerRecord } from '../shared/types';
 
 type Page = 'overview' | 'opportunities' | 'routes' | 'products' | 'history' | 'simulation' | 'servers' | 'journal' | 'settings';
 const NAV: Array<{ id: Page; label: string; icon: typeof LayoutDashboard }> = [
@@ -30,6 +30,7 @@ export default function App() {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [products, setProducts] = useState<Awaited<ReturnType<typeof api.products>>>([]);
   const [events, setEvents] = useState<Awaited<ReturnType<typeof api.events>>>([]);
+  const [marketRestrictions, setMarketRestrictions] = useState<RestrictedOfferSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -46,7 +47,10 @@ export default function App() {
     const failures: string[] = [];
     if (d.ok) setDashboard(d.data); else failures.push(d.error instanceof Error ? d.error.message : '/api/dashboard: ошибка');
     if (s.ok) setServers(s.data); else failures.push(s.error instanceof Error ? s.error.message : '/api/servers: ошибка');
-    if (o.ok) setOpportunities(o.data.opportunities); else failures.push(o.error instanceof Error ? o.error.message : '/api/opportunities: ошибка');
+    if (o.ok) {
+      setOpportunities(o.data.opportunities);
+      setMarketRestrictions(o.data.restrictions ?? []);
+    } else failures.push(o.error instanceof Error ? o.error.message : '/api/opportunities: ошибка');
     if (p.ok) setProducts(p.data); else failures.push(p.error instanceof Error ? p.error.message : '/api/products: ошибка');
     if (e.ok) setEvents(e.data); else failures.push(e.error instanceof Error ? e.error.message : '/api/events: ошибка');
     setError(failures.length ? `Не удалось загрузить часть данных: ${failures.join(' · ')}` : '');
@@ -88,6 +92,7 @@ export default function App() {
       <div className="page-wrap">
         {error && <div className="alert error"><AlertTriangle size={17} /> {error} <button onClick={() => void refresh()}>Повторить</button></div>}
         {notice && <div className="alert success">{notice}</div>}
+        {marketRestrictions.length > 0 && <div className="alert warning"><AlertTriangle size={17} /><span>Из исполнимого анализа исключены заявки профессиональных рынков: {marketRestrictions.map((item) => `${item.storeName} — ${item.count}`).join('; ')}. Совместимость товаров с хранилищами не подтверждена.</span></div>}
         {page === 'overview' && <Dashboard dashboard={dashboard} opportunities={opportunities} servers={servers} loading={loading} setPage={setPage} />}
         {page === 'opportunities' && <OpportunitiesPage items={opportunities} loading={loading} />}
         {page === 'routes' && <RouteBuilder />}
@@ -174,7 +179,16 @@ function RouteBuilder() {
   const [message, setMessage] = useState('');
   const search = async () => {
     setBusy(true); setMessage(''); setSelected('');
-    try { const result = await api.searchRoutes(currency.trim(), capital.trim()); setRoutes(result.routes); if (!result.routes.length) setMessage(`Маршруты из ${capital} ${currency} не найдены. Обработано предложений: ${result.analyzedOffers}.`); }
+    try {
+      const result = await api.searchRoutes(currency.trim(), capital.trim());
+      setRoutes(result.routes);
+      if (!result.routes.length) {
+        const excluded = result.excludedOffers
+          ? ` Исключено заявок с неподтверждёнными ограничениями хранилищ: ${result.excludedOffers}.`
+          : '';
+        setMessage(`Маршруты из ${capital} ${currency} не найдены. Обработано предложений: ${result.analyzedOffers}.${excluded}`);
+      }
+    }
     catch (error) { setMessage(error instanceof Error ? error.message : 'Не удалось выполнить поиск'); }
     finally { setBusy(false); }
   };
