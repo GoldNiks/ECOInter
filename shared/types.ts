@@ -46,7 +46,6 @@ export interface AnalysisOptions {
   maxDurationMs: number;
   minProfit: string;
   minRoiPercent: string;
-  maxStartingCapital?: string;
   startingCapitalByCurrency?: Record<string, string>;
   feesByServer?: Record<string, FeePolicy>;
   maxQuoteAgeSeconds: number;
@@ -101,6 +100,8 @@ export interface RouteLeg {
   feesTo: string;
   inputBalance: string;
   outputBalance: string;
+  /** Funds left in the input currency because the available lot was smaller than the balance. */
+  unspentInputBalance: string;
   buyOfferId: string;
   sellOfferId: string;
 }
