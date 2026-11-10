@@ -125,9 +125,11 @@ function professionalMarket(name: string) {
   return PROFESSIONAL_MARKETS.find((profile) => profile.match.test(name));
 }
 
-function deterministicStoreId(serverId: string, storeIndex: number, name: string, owner: string): string {
+function deterministicStoreId(serverId: string, name: string, owner: string): string {
+  // Store identity must survive GoodPrice reordering its Stores array;
+  // otherwise saved Eco world coordinates would silently point nowhere.
   return createHash('sha256')
-    .update(`${serverId}\\0${storeIndex}\\0${name}\\0${owner}`)
+    .update(`${serverId}\\0${name.trim().normalize('NFKC')}\\0${owner.trim().normalize('NFKC')}`)
     .digest('hex').slice(0, 32);
 }
 function positiveInt(value: unknown): number {
@@ -170,7 +172,7 @@ export function normalizeGoodPriceStores(payload: Record<string, unknown>, serve
     const owner = cleanName(store.Owner);
     const currency = cleanName(store.CurrencyName);
     const profile = professionalMarket(storeName);
-    const storeId = deterministicStoreId(serverId, storeIndex, storeName, owner);
+    const storeId = deterministicStoreId(serverId, storeName, owner);
     if (!storeName || !currency || !Array.isArray(store.AllOffers)) return;
     const balanceRaw = store.Balance;
     const balanceText = String(balanceRaw ?? '').trim().toLowerCase();
