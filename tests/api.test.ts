@@ -129,3 +129,35 @@ test('server can be created and deleted through the API', async () => {
   assert.equal(removed.statusCode, 200, removed.body);
   assert.deepEqual(removed.json(), { ok: true });
 });
+
+
+test('legacy saved search defaults are upgraded while custom settings stay in place', async () => {
+  const saved = await app.inject({
+    method: 'POST',
+    url: '/api/settings/analysis',
+    payload: {
+      maxOperations: 6,
+      maxUniqueItems: 6,
+      maxIntermediateCurrencies: 4,
+      maxResults: 100,
+      maxCombinations: 100000,
+      maxDurationMs: 5000,
+      minProfit: '0',
+      minRoiPercent: '0',
+      minRouteRoiPercent: '5',
+      maxQuoteAgeSeconds: 900,
+    },
+  });
+  assert.equal(saved.statusCode, 200, saved.body);
+
+  const loaded = await app.inject({ method: 'GET', url: '/api/settings/analysis' });
+  assert.equal(loaded.statusCode, 200, loaded.body);
+  const options = loaded.json();
+  assert.equal(options.maxOperations, 8);
+  assert.equal(options.maxUniqueItems, 8);
+  assert.equal(options.maxIntermediateCurrencies, 6);
+  assert.equal(options.maxResults, 250);
+  assert.equal(options.maxCombinations, 250000);
+  assert.equal(options.maxDurationMs, 8000);
+  assert.equal(options.minRouteRoiPercent, '0');
+});
