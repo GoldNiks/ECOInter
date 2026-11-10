@@ -4,3 +4,17 @@
 .simulation-create{margin-bottom:24px}.simulation-create-row{display:flex;gap:10px}.simulation-create-row .field{flex:1}.simulation-heading{margin-bottom:12px}.simulation-list{display:grid}.simulation-row{display:flex;align-items:center;gap:18px;padding:14px 17px;border-bottom:1px solid #202b39}.simulation-row:last-child{border:0}.simulation-state{display:grid;gap:7px;min-width:108px}.simulation-state small{font:9px 'DM Mono',monospace;color:#78889b}.simulation-detail{display:grid;gap:5px;flex:1;min-width:130px}.simulation-detail strong{font-size:11px;color:#dce5ef}.simulation-detail small{font-size:9px;color:#8594a8}.simulation-actions{display:flex;align-items:center;gap:6px}.actual-input{width:110px;height:30px}.event-level.info{background:#1a2e26;color:#70d2a3}.empty-inline{padding:14px 0 0;color:#78899c;font-size:10px}.simulation-row .button{white-space:nowrap}@media(max-width:850px){.simulation-row{align-items:flex-start;flex-wrap:wrap}.simulation-actions{width:100%;flex-wrap:wrap}.simulation-actions .actual-input{flex:1}.simulation-create-row{flex-direction:column}}
 
 .server-token-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;margin-top:12px}.server-token-row .field{min-width:0}.server-action-buttons{display:flex;gap:7px;flex-wrap:wrap}.server-card form>.muted-text{display:block;margin-top:10px;line-height:1.6}@media(max-width:650px){.server-token-row{grid-template-columns:1fr}.server-actions{align-items:flex-start;flex-direction:column}}
+
+/* Opportunity selection and detail panel */
+.opportunity-row { transition: background .15s ease; }
+.opportunity-open { white-space: nowrap; }
+.opportunity-detail { margin-top: 14px; }
+.opportunity-detail .panel-title { align-items: center; }
+.opportunity-detail-grid { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; margin: 14px 0; }
+.opportunity-detail-grid > div { min-width: 0; padding: 12px; background: #0e1722; border: 1px solid #253344; border-radius: 8px; }
+.opportunity-detail-grid span { display: block; color: #78899e; font-size: 9px; margin-bottom: 7px; }
+.opportunity-detail-grid b { display: block; color: #dce5ef; font: 11px 'DM Mono',monospace; overflow-wrap: anywhere; }
+.opportunity-detail-grid small { display: block; color: #718198; font-size: 9px; margin-top: 5px; overflow-wrap: anywhere; }
+.opportunity-detail-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+.detail-note { color: #8292a5; font-size: 10px; margin-top: 10px; }
+@media(max-width:850px) { .opportunity-detail-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
