@@ -101,7 +101,7 @@ test('capital above the available first lot preserves the unspent starting-curre
 
 test('route search is not blocked by a hidden maximum starting-capital setting', () => {
   const found = findMultiStepRoutes(routeFixture, {
-    ...options, startingCapitalByCurrency: { RELAX: '1000000' },
+    ...options, startingCapitalByCurrency: { RELAX: '1000000' }, minRouteRoiPercent: '0',
   }, Date.parse(now));
   const route = found.find((x) => x.startCurrency === 'RELAX');
   assert.ok(route);
