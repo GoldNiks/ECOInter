@@ -1,9 +1,37 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 function keyFromEnvironment(): Buffer | null {
-  const secret = process.env.ECOINTER_MASTER_KEY;
-  if (!secret) return null;
-  return scryptSync(secret, 'ecointer-local-secret-v1', 32);
+  const secret = process.env.ECOINTER_MASTER_KEY?.trim();
+  if (secret) return scryptSync(secret, 'ecointer-local-secret-v1', 32);
+
+  // First-run convenience: generate a private local key automatically.
+  // The key is stored next to the local SQLite database, never in source control.
+  const databasePath = process.env.DATABASE_PATH ?? './data/ecointer.sqlite';
+  const keyPath = process.env.ECOINTER_KEY_FILE
+    ?? path.join(path.dirname(path.resolve(databasePath)), 'master.key');
+  try {
+    fs.mkdirSync(path.dirname(path.resolve(keyPath)), { recursive: true });
+    try {
+      const existing = fs.readFileSync(keyPath);
+      return existing.length === 32 ? existing : null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return null;
+    }
+    const generated = randomBytes(32);
+    try {
+      fs.writeFileSync(keyPath, generated, { flag: 'wx', mode: 0o600 });
+      return generated;
+    } catch (error) {
+      // Another local process may have won the first-run creation race.
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return null;
+      const existing = fs.readFileSync(keyPath);
+      return existing.length === 32 ? existing : null;
+    }
+  } catch {
+    return null;
+  }
 }
 
 export function encryptSecret(plainText: string): string | null {
@@ -18,9 +46,9 @@ export function encryptSecret(plainText: string): string | null {
 
 export function decryptSecret(payload: string): string {
   const key = keyFromEnvironment();
-  if (!key) throw new Error('ECOINTER_MASTER_KEY is not configured');
+  if (!key) throw new Error('Не удалось открыть локальный ключ ECOInter. Проверьте файл data/master.key.');
   const [version, iv, tag, body] = payload.split('.');
-  if (version !== 'v1' || !iv || !tag || !body) throw new Error('Unsupported encrypted secret format');
+  if (version !== 'v1' || !iv || !tag || !body) throw new Error('Неподдерживаемый формат зашифрованного токена.');
   const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'));
   decipher.setAuthTag(Buffer.from(tag, 'base64'));
   return Buffer.concat([decipher.update(Buffer.from(body, 'base64')), decipher.final()]).toString('utf8');
