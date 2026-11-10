@@ -2,9 +2,15 @@ import type { AnalysisOptions, Opportunity, ServerRecord } from '../../shared/ty
 
 const API = '/api';
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  // Fastify rejects an empty request body when JSON Content-Type is set.
+  // Only send that header for requests that actually carry a body.
+  if (init?.body !== undefined && init.body !== null && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
   const response = await fetch(`${API}${path}`, {
     ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    headers,
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
