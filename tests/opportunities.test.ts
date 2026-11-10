@@ -48,7 +48,45 @@ test('multi-step engine reproduces the two-currency example exactly', () => {
   assert.deepEqual(route.legs.map((x) => [x.itemName, x.quantity]), [['Товар A', 3], ['Товар B', 2]]);
 });
 
-test('capital above the available first lot preserves the unspent starting-currency reserve', () => {
+test('route depth aggregates multiple buy and sell listings but preserves profitable partial-volume variants', () => {
+  const market: MarketOffer[] = [
+    offer('a-ask-1', 'A', 'Товар A', 'buy', 'RELAX', '150', 3),
+    offer('a-ask-2', 'A', 'Товар A', 'buy', 'RELAX', '100', 2),
+    offer('a-bid-1', 'A', 'Товар A', 'sell', 'GOLD', '200', 3),
+    offer('a-bid-2', 'A', 'Товар A', 'sell', 'GOLD', '140', 2),
+    offer('b-ask', 'B', 'Товар B', 'buy', 'GOLD', '200', 2),
+    offer('b-bid', 'B', 'Товар B', 'sell', 'RELAX', '500', 2),
+  ];
+  const found = findMultiStepRoutes(market, {
+    ...options, startingCapitalByCurrency: { RELAX: '250' },
+  }, Date.parse(now));
+  const best = found[0];
+  assert.ok(best, 'expected a route using multiple levels of both order books');
+  assert.equal(best.netProfit, '350');
+  assert.equal(best.legs[0].quantity, 3, 'the most profitable partial fill should survive');
+  assert.equal(best.legs[0].sellOfferIds.length, 2, 'the conversion should combine multiple sell listings');
+  assert.ok(found.some((route) => route.legs[0].quantity === 5 && route.legs[0].buyOfferIds.length === 2),
+    'deeper variant should aggregate multiple buy listings');
+});
+
+test('route-specific minimum ROI filters negligible but positive loops', () => {
+  const lowMargin: MarketOffer[] = [
+    offer('low-a-ask', 'A', 'Товар A', 'buy', 'RELAX', '100', 1),
+    offer('low-a-bid', 'A', 'Товар A', 'sell', 'GOLD', '100', 1),
+    offer('low-b-ask', 'B', 'Товар B', 'buy', 'GOLD', '100', 1),
+    offer('low-b-bid', 'B', 'Товар B', 'sell', 'RELAX', '101', 1),
+  ];
+  const filtered = findMultiStepRoutes(lowMargin, {
+    ...options, startingCapitalByCurrency: { RELAX: '100' }, minRouteRoiPercent: '5',
+  }, Date.parse(now));
+  assert.deepEqual(filtered, []);
+  const unfiltered = findMultiStepRoutes(lowMargin, {
+    ...options, startingCapitalByCurrency: { RELAX: '100' }, minRouteRoiPercent: '0',
+  }, Date.parse(now));
+  assert.equal(unfiltered[0]?.netProfit, '1');
+});
+
+test('capital above the available first lot preserves the unspent starting-currency reserve', () =>
   const found = findMultiStepRoutes(routeFixture, {
     ...options, startingCapitalByCurrency: { RELAX: '1000' },
   }, Date.parse(now));
