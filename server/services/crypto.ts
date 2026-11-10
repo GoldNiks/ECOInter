@@ -8,9 +8,7 @@ function keyFromEnvironment(): Buffer | null {
 
   // First-run convenience: generate a private local key automatically.
   // The key is stored next to the local SQLite database, never in source control.
-  const databasePath = process.env.DATABASE_PATH ?? './data/ecointer.sqlite';
-  const keyPath = process.env.ECOINTER_KEY_FILE
-    ?? path.join(path.dirname(path.resolve(databasePath)), 'master.key');
+  const keyPath = process.env.ECOINTER_KEY_FILE ?? './data/master.key';
   try {
     fs.mkdirSync(path.dirname(path.resolve(keyPath)), { recursive: true });
     try {
