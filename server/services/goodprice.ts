@@ -189,14 +189,14 @@ export async function probeGoodPrice(url: string, token?: string, timeoutMs = 80
       reachable: true, verified: true, statusCode: result.statusCode, contentType: result.contentType,
       elapsedMs: result.elapsedMs, storesCount: count, offersCount: offerCount,
       message: `GoodPrice API подтверждён: ${count} магазинов, ${offerCount} активных предложений. Рыночные данные пока не импортированы.`,
-      warning: new URL(url).protocol === 'http:' ? 'Токен передаётся по незашифрованному HTTP.' : undefined,
+      warning: token && new URL(url).protocol === 'http:' ? 'Токен передаётся по незашифрованному HTTP.' : undefined,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'Неизвестная ошибка GoodPrice';
     const statusCode = error instanceof GoodPriceError ? error.statusCode : undefined;
     const authRequired = !token && (statusCode === 401 || statusCode === 403);
     return {
-      reachable: statusCode !== undefined || !detail.includes('Не удалось подключиться'),
+      reachable: statusCode !== undefined,
       verified: false, statusCode, elapsedMs: Date.now() - started,
       message: detail,
       warning: authRequired ? 'TOKEN_REQUIRED' : new URL(url).protocol === 'http:' ? 'HTTP_INSECURE' : undefined,
