@@ -77,6 +77,22 @@ test('currency names differing only by case are not treated as a conversion', ()
   assert.deepEqual(found, []);
 });
 
+test('restricted store offers are excluded from executable trades and routes', () => {
+  const market: MarketOffer[] = [
+    offer('research-ask', 'RESEARCH', 'Basic Geology Research', 'buy', 'RELAX', '10', 1),
+    {
+      ...offer('research-bid', 'RESEARCH', 'Basic Geology Research', 'sell', 'RELAX', '100', 1),
+      storeName: 'Охотничий рынок',
+      tradeAllowed: false,
+      tradeRestriction: 'Хранилище охотничьего рынка не принимает этот предмет.',
+    },
+  ];
+  assert.deepEqual(findDirectOpportunities(market, options, Date.parse(now)), []);
+  assert.deepEqual(findMultiStepRoutes(market, {
+    ...options, startingCapitalByCurrency: { RELAX: '100' },
+  }, Date.parse(now)), []);
+});
+
 test('direct and multi-step analyses run independently', () => {
   const market = [...routeFixture,
     offer('c-ask', 'C', 'Товар C', 'buy', 'RELAX', '50', 10),
