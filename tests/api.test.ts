@@ -49,6 +49,60 @@ test('route search handles an empty local market', async () => {
   assert.equal(response.json().analyzedOffers, 0);
 });
 
+test('imported restricted offers stay out of opportunities and route searches', async () => {
+  const created = await app.inject({
+    method: 'POST',
+    url: '/api/servers',
+    payload: {
+      name: 'Restricted-market integration',
+      gameServerUrl: '',
+      goodPriceUrl: 'http://127.0.0.1:3001/plugin/GoodPrice',
+    },
+  });
+  assert.equal(created.statusCode, 201, created.body);
+  const { id: serverId } = created.json() as { id: string };
+
+  const imported = await app.inject({
+    method: 'POST',
+    url: '/api/market/import',
+    payload: {
+      schemaVersion: 'ecointer.market.v1',
+      sourceId: 'integration-test',
+      serverId,
+      capturedAt: '2026-11-11T00:00:00.000Z',
+      offers: [
+        {
+          id: 'ordinary-ask', serverId, itemId: 'RESEARCH', itemName: 'Basic Geology Research',
+          action: 'buy', currency: 'RELAX', totalPrice: '10', quantity: 1,
+          quoteKind: 'listing', observedAt: '2026-11-11T00:00:00.000Z',
+        },
+        {
+          id: 'hunter-bid', serverId, storeId: 'hunter-store', storeName: 'Охотничий рынок',
+          itemId: 'RESEARCH', itemName: 'Basic Geology Research',
+          action: 'sell', currency: 'RELAX', totalPrice: '100', quantity: 1,
+          quoteKind: 'listing', observedAt: '2026-11-11T00:00:00.000Z',
+          tradeAllowed: false, tradeRestriction: 'Хранилище охотничьего рынка не принимает этот предмет.',
+        },
+      ],
+    },
+  });
+  assert.equal(imported.statusCode, 200, imported.body);
+
+  const opportunities = await app.inject({ method: 'GET', url: '/api/opportunities' });
+  assert.equal(opportunities.statusCode, 200, opportunities.body);
+  assert.equal(opportunities.json().count, 0);
+  assert.equal(opportunities.json().excludedOffers, 1);
+  assert.equal(opportunities.json().restrictions[0].storeName, 'Охотничий рынок');
+
+  const routes = await app.inject({
+    method: 'POST', url: '/api/routes/search',
+    payload: { currency: 'RELAX', capital: '100' },
+  });
+  assert.equal(routes.statusCode, 200, routes.body);
+  assert.deepEqual(routes.json().routes, []);
+  assert.equal(routes.json().excludedOffers, 1);
+});
+
 test('server can be created and deleted through the API', async () => {
   const created = await app.inject({
     method: 'POST',
