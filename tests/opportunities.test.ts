@@ -226,3 +226,66 @@ test('future-dated quotes are excluded rather than treated as fresh', () => {
   ];
   assert.equal(findDirectOpportunities(market, options, Date.parse(now)).length, 0);
 });
+
+
+test('direct search keeps separate store-pair alternatives and ranks the shortest profitable trip first', () => {
+  const market: MarketOffer[] = [
+    { ...offer('near-buy', 'DIST', 'Distance Item', 'buy', 'RELAX', '10', 2), storeId: 'near-buy', storeName: 'Ближний продавец' },
+    { ...offer('near-sell', 'DIST', 'Distance Item', 'sell', 'RELAX', '20', 2), storeId: 'near-sell', storeName: 'Ближний покупатель' },
+    { ...offer('far-buy', 'DIST', 'Distance Item', 'buy', 'RELAX', '10', 2), storeId: 'far-buy', storeName: 'Дальний продавец' },
+    { ...offer('far-sell', 'DIST', 'Distance Item', 'sell', 'RELAX', '20', 2), storeId: 'far-sell', storeName: 'Дальний покупатель' },
+  ];
+  const found = findDirectOpportunities(market, {
+    ...options,
+    storeLocations: {
+      'server-1::near-buy': { x: 0, z: 0 },
+      'server-1::near-sell': { x: 10, z: 0 },
+      'server-1::far-buy': { x: 0, z: 0 },
+      'server-1::far-sell': { x: 200, z: 0 },
+    },
+  }, Date.parse(now));
+  assert.equal(found.length, 4, 'each physical buy/sell store pair should be an independent candidate');
+  assert.equal(found[0].distanceUnits, 10);
+  assert.equal(found[0].offerCount, 2);
+  assert.equal(found[0].netProfit, '10');
+});
+
+test('manual per-store item confirmation re-enables only the explicitly allowed professional-market item', () => {
+  const market: MarketOffer[] = [
+    offer('hunter-ask', 'MEAT', 'Wolf Meat', 'buy', 'RELAX', '10', 1),
+    {
+      ...offer('hunter-bid', 'MEAT', 'Wolf Meat', 'sell', 'RELAX', '25', 1),
+      storeId: 'hunter-store', storeName: 'Охотничий рынок',
+      tradeAllowed: false, tradeRestriction: 'Нужно проверить совместимость склада.',
+    },
+  ];
+  assert.deepEqual(findDirectOpportunities(market, options, Date.parse(now)), []);
+  const allowed = findDirectOpportunities(market, {
+    ...options, storeAcceptedItems: { 'server-1::hunter-store': ['Wolf Meat'] },
+  }, Date.parse(now));
+  assert.equal(allowed.length, 1);
+  assert.equal(allowed[0].netProfit, '15');
+});
+
+test('multi-step route distance includes shop-to-shop legs and transfers between consecutive trades', () => {
+  const market: MarketOffer[] = [
+    { ...offer('a-ask-distance', 'A', 'Товар A', 'buy', 'RELAX', '150', 3), storeId: 'a-buy', storeName: 'A · покупка' },
+    { ...offer('a-bid-distance', 'A', 'Товар A', 'sell', 'GOLD', '200', 3), storeId: 'a-sell', storeName: 'A · приём' },
+    { ...offer('b-ask-distance', 'B', 'Товар B', 'buy', 'GOLD', '200', 2), storeId: 'b-buy', storeName: 'B · покупка' },
+    { ...offer('b-bid-distance', 'B', 'Товар B', 'sell', 'RELAX', '500', 2), storeId: 'b-sell', storeName: 'B · приём' },
+  ];
+  const found = findMultiStepRoutes(market, {
+    ...options,
+    startingCapitalByCurrency: { RELAX: '150' },
+    storeLocations: {
+      'server-1::a-buy': { x: 0, z: 0 },
+      'server-1::a-sell': { x: 3, z: 4 },
+      'server-1::b-buy': { x: 6, z: 8 },
+      'server-1::b-sell': { x: 9, z: 12 },
+    },
+  }, Date.parse(now));
+  const route = found.find((entry) => entry.legs.map((leg) => leg.itemId).join(',') === 'A,B');
+  assert.ok(route, 'expected the RELAX → GOLD → RELAX route');
+  assert.equal(route.distanceUnits, 15, '5 units per trade leg plus 5 units between the two stores');
+  assert.deepEqual(route.legs.map((leg) => leg.distanceUnits), [5, 5]);
+});
