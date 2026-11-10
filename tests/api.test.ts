@@ -27,7 +27,7 @@ test('all API endpoints used during initial load respond successfully on a clean
     ['/api/history', (body: any) => assert.deepEqual(body, [])],
     ['/api/market/offers', (body: any) => assert.deepEqual(body, [])],
     ['/api/simulations', (body: any) => assert.deepEqual(body, [])],
-    ['/api/settings/analysis', (body: any) => assert.equal(body.maxOperations, 6)],
+    ['/api/settings/analysis', (body: any) => assert.equal(body.maxOperations, 8)],
   ] as const;
 
   for (const [url, verify] of checks) {
