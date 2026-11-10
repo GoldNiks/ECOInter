@@ -153,66 +153,141 @@ interface ConversionEdge {
   itemName: string;
   fromCurrency: string;
   toCurrency: string;
-  buy: MarketOffer;
-  sell: MarketOffer;
+  buyOffers: MarketOffer[];
+  sellOffers: MarketOffer[];
   capacity: number;
 }
 function currencyKey(currency: string): string {
   return currency.trim().normalize('NFKC').toLocaleLowerCase('ru-RU');
 }
 
+function totalListedQuantity(book: MarketOffer[]): number {
+  return book.reduce((sum, offer) => Math.min(Number.MAX_SAFE_INTEGER, sum + offer.quantity), 0);
+}
+
+/** Prefix boundaries preserve both shallow, high-margin fills and deeper fills. */
+function quantityBreakpoints(book: MarketOffer[], limit: number): number[] {
+  const points = new Set<number>();
+  let total = 0;
+  for (const offer of book) {
+    total = Math.min(Number.MAX_SAFE_INTEGER, total + offer.quantity);
+    if (total > 0 && total <= limit) points.add(total);
+  }
+  return [...points];
+}
+
 function buildEdges(offers: MarketOffer[], options: AnalysisOptions, now: number): ConversionEdge[] {
   const eligible = offers.filter((o) => validOffer(o) && fresh(o, options.maxQuoteAgeSeconds, now));
   const grouped = new Map<string, MarketOffer[]>();
-  for (const o of eligible) {
-    const key = `${o.serverId}\u0000${o.itemId}`;
-    grouped.set(key, [...(grouped.get(key) ?? []), o]);
+  for (const offer of eligible) {
+    const key = `${offer.serverId}\\u0000${offer.itemId}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), offer]);
   }
   const edges: ConversionEdge[] = [];
   for (const group of grouped.values()) {
-    const buys = group.filter((o) => o.action === 'buy');
-    const sells = group.filter((o) => o.action === 'sell');
-    for (const buy of buys) for (const sell of sells) {
-      // Currency names come from player-configured GoodPrice stores. Match names
-      // without case sensitivity so typing "CREDIT" finds "Credit" in the feed.
-      if (currencyKey(buy.currency) === currencyKey(sell.currency) || buy.serverId !== sell.serverId) continue;
-      edges.push({
-        key: `${buy.id}->${sell.id}`, serverId: buy.serverId, itemId: buy.itemId,
-        itemName: buy.itemName, fromCurrency: buy.currency.trim(), toCurrency: sell.currency.trim(),
-        buy, sell, capacity: Math.min(buy.quantity, sell.quantity),
-      });
+    const buyBooks = new Map<string, MarketOffer[]>();
+    const sellBooks = new Map<string, MarketOffer[]>();
+    for (const offer of group) {
+      const book = offer.action === 'buy' ? buyBooks : sellBooks;
+      const key = currencyKey(offer.currency);
+      book.set(key, [...(book.get(key) ?? []), offer]);
+    }
+    for (const [fromKey, rawBuys] of buyBooks) {
+      const buyOffers = [...rawBuys].sort((a, b) =>
+        compareUnitPrice(money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity));
+      for (const [toKey, rawSells] of sellBooks) {
+        if (fromKey === toKey) continue;
+        const sellOffers = [...rawSells].sort((a, b) =>
+          -compareUnitPrice(money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity));
+        const capacity = Math.min(totalListedQuantity(buyOffers), totalListedQuantity(sellOffers));
+        if (capacity <= 0) continue;
+
+        // Keep every depth breakpoint. A route using only the best 3 units can
+        // outperform one that empties all 20 units when a later step has less depth.
+        const breakpoints = new Set<number>([
+          ...quantityBreakpoints(buyOffers, capacity),
+          ...quantityBreakpoints(sellOffers, capacity),
+          capacity,
+        ]);
+        for (const limit of [...breakpoints].filter((x) => x > 0).sort((a, b) => a - b)) {
+          edges.push({
+            key: `${group[0].serverId}:${group[0].itemId}:${fromKey}:${toKey}:${limit}`,
+            serverId: group[0].serverId, itemId: group[0].itemId,
+            itemName: buyOffers[0].itemName, fromCurrency: buyOffers[0].currency.trim(),
+            toCurrency: sellOffers[0].currency.trim(), buyOffers, sellOffers, capacity: limit,
+          });
+        }
+      }
     }
   }
   return edges;
+}
+
+function buyBookCost(book: MarketOffer[], quantity: number): { total: bigint; ids: string[] } {
+  let left = quantity, total = ZERO;
+  const ids: string[] = [];
+  for (const offer of book) {
+    if (left <= 0) break;
+    const take = Math.min(left, offer.quantity);
+    if (take <= 0) continue;
+    total = add(total, grossCostCeil(offer, take));
+    ids.push(offer.id);
+    left -= take;
+  }
+  return { total, ids };
+}
+
+function sellBookRevenue(book: MarketOffer[], quantity: number): { total: bigint; ids: string[] } {
+  let left = quantity, total = ZERO;
+  const ids: string[] = [];
+  for (const offer of book) {
+    if (left <= 0) break;
+    const take = Math.min(left, offer.quantity);
+    if (take <= 0) continue;
+    total = add(total, grossCost(offer, take));
+    ids.push(offer.id);
+    left -= take;
+  }
+  return { total, ids };
 }
 
 function executeEdge(edge: ConversionEdge, balance: bigint, options: AnalysisOptions): RouteLeg | null {
   const fees = feePolicy(options, edge.serverId);
   const buyPct = money(fees.buyPercent), sellPct = money(fees.sellPercent), taxPct = money(fees.taxPercent);
   const buyFixed = money(fees.buyFixed), sellFixed = money(fees.sellFixed);
-  const total = money(edge.buy.totalPrice);
-  const divisor = BigInt(edge.buy.quantity);
-  const perUnit = total / divisor + (total % divisor === 0n ? 0n : 1n);
-  const allInPerUnit = add(perUnit, percentOfSafe(perUnit, buyPct));
-  const spendable = sub(balance, buyFixed);
-  const quantity = Math.min(edge.capacity, floorUnits(spendable, allInPerUnit));
+  if (balance <= buyFixed) return null;
+
+  // Find the largest whole quantity affordable across the cumulative ask levels.
+  let low = 0, high = edge.capacity;
+  while (low < high) {
+    const mid = low + Math.ceil((high - low) / 2);
+    const cost = buyBookCost(edge.buyOffers, mid).total;
+    const required = add(cost, add(percentOfSafe(cost, buyPct), buyFixed));
+    if (required <= balance) low = mid;
+    else high = mid - 1;
+  }
+  const quantity = low;
   if (quantity < 1) return null;
-  const buyCost = grossCostCeil(edge.buy, quantity);
-  const buyFee = add(percentOfSafe(buyCost, buyPct), buyFixed);
-  const inputUsed = add(buyCost, buyFee);
+
+  const buy = buyBookCost(edge.buyOffers, quantity);
+  const sell = sellBookRevenue(edge.sellOffers, quantity);
+  if (buy.ids.length === 0 || sell.ids.length === 0) return null;
+  const buyFee = add(percentOfSafe(buy.total, buyPct), buyFixed);
+  const inputUsed = add(buy.total, buyFee);
   if (inputUsed > balance) return null;
-  const sellGross = grossCost(edge.sell, quantity);
-  const sellFees = add(percentOfSafe(sellGross, sellPct), add(percentOfSafe(sellGross, taxPct), sellFixed));
-  const output = sub(sellGross, sellFees);
+  const sellFees = add(percentOfSafe(sell.total, sellPct), add(percentOfSafe(sell.total, taxPct), sellFixed));
+  const output = sub(sell.total, sellFees);
   if (output <= ZERO) return null;
+
   return {
     itemId: edge.itemId, itemName: edge.itemName, serverId: edge.serverId, quantity,
     fromCurrency: edge.fromCurrency, toCurrency: edge.toCurrency,
-    buyCost: moneyString(buyCost), sellRevenue: moneyString(sellGross),
+    buyCost: moneyString(buy.total), sellRevenue: moneyString(sell.total),
     feesFrom: moneyString(buyFee), feesTo: moneyString(sellFees),
     inputBalance: moneyString(balance), outputBalance: moneyString(output),
     unspentInputBalance: moneyString(sub(balance, inputUsed)),
-    buyOfferId: edge.buy.id, sellOfferId: edge.sell.id,
+    buyOfferId: buy.ids[0], sellOfferId: sell.ids[0],
+    buyOfferIds: buy.ids, sellOfferIds: sell.ids,
   };
 }
 
@@ -300,7 +375,7 @@ export function findMultiStepRoutesDetailed(
         const nextLegs = [...legs, leg];
         if (closesCycle) {
           if (nextLegs.length < 2) continue;
-          const routeId = nextLegs.map((x) => `${x.buyOfferId}:${x.sellOfferId}`).join('|');
+          const routeId = nextLegs.map((x) => `${x.buyOfferIds.join(',')}:${x.sellOfferIds.join(',')}:${x.quantity}`).join('|');
           if (seen.has(routeId)) continue;
           seen.add(routeId);
           // The first buy can be limited by available listing quantity. Cash that
@@ -310,8 +385,11 @@ export function findMultiStepRoutesDetailed(
           const finalCapital = add(money(leg.outputBalance), startingReserve);
           const profit = sub(finalCapital, initial);
           const capital = initial;
-          if (profit <= ZERO || profit < money(options.minProfit) || ratioPercent(profit, capital) < money(options.minRoiPercent)) continue;
-          const usedQuotes = nextLegs.flatMap((x) => [offerById.get(x.buyOfferId), offerById.get(x.sellOfferId)]).filter(Boolean) as MarketOffer[];
+          const requiredRouteRoi = money(options.minRouteRoiPercent ?? '0');
+          const requiredGlobalRoi = money(options.minRoiPercent);
+          const minimumRoi = requiredRouteRoi > requiredGlobalRoi ? requiredRouteRoi : requiredGlobalRoi;
+          if (profit <= ZERO || profit < money(options.minProfit) || ratioPercent(profit, capital) < minimumRoi) continue;
+          const usedQuotes = nextLegs.flatMap((x) => [...x.buyOfferIds, ...x.sellOfferIds].map((id) => offerById.get(id))).filter(Boolean) as MarketOffer[];
           results.push({
             id: `route:${start}:${routeId}`, kind: 'multi_step', serverId: edge.serverId,
             startCurrency: start, endCurrency: start, initialCapital: moneyString(capital),
@@ -356,5 +434,5 @@ export function analyzeMarket(offers: MarketOffer[], options: AnalysisOptions, n
 
 export const DEFAULT_ANALYSIS_OPTIONS: AnalysisOptions = {
   maxOperations: 6, maxUniqueItems: 6, maxIntermediateCurrencies: 4,
-  maxResults: 100, maxCombinations: 100000, maxDurationMs: 5000, minProfit: '0', minRoiPercent: '0', maxQuoteAgeSeconds: 900,
+  maxResults: 100, maxCombinations: 100000, maxDurationMs: 5000, minProfit: '0', minRoiPercent: '0', minRouteRoiPercent: '5', maxQuoteAgeSeconds: 900,
 };
