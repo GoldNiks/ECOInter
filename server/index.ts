@@ -57,6 +57,52 @@ function persistSnapshot(snapshot: MarketSnapshot) {
   tx();
   logEvent('info', 'market_sync', `GoodPrice: импортировано предложений — ${snapshot.offers.length}`, snapshot.serverId);
 }
+
+const syncInProgress = new Set<string>();
+const syncRetryAfter = new Map<string, number>();
+
+async function syncGoodPriceServer(serverId: string): Promise<MarketSnapshot> {
+  if (syncInProgress.has(serverId)) throw new Error('Синхронизация этого сервера уже выполняется.');
+  const server = db.select().from(servers).where(eq(servers.id, serverId)).get();
+  if (!server) throw new Error('Сервер не найден.');
+  if (!server.encryptedToken) throw new Error('Для загрузки рынка нужен world ticket GoodPrice.');
+
+  syncInProgress.add(serverId);
+  try {
+    const token = decryptSecret(server.encryptedToken);
+    const snapshot = await fetchGoodPriceSnapshot(server.goodPriceUrl, token, serverId);
+    persistSnapshot(snapshot);
+    syncRetryAfter.delete(serverId);
+    return snapshot;
+  } catch (error) {
+    const detail = safeError(error);
+    const statusCode = typeof error === 'object' && error && 'statusCode' in error
+      ? Number((error as { statusCode?: unknown }).statusCode) : undefined;
+    const authFailure = statusCode === 401 || statusCode === 403;
+    db.update(servers).set({
+      status: authFailure ? 'auth_failed' : 'sync_error',
+      lastError: detail,
+    }).where(eq(servers.id, serverId)).run();
+    logEvent('error', 'market_sync_failed', detail, serverId);
+    syncRetryAfter.set(serverId, Date.now() + Math.max(60, server.refreshSeconds) * 1000);
+    throw error;
+  } finally {
+    syncInProgress.delete(serverId);
+  }
+}
+
+async function syncDueServers() {
+  const now = Date.now();
+  const configured = db.select().from(servers).all();
+  for (const server of configured) {
+    if (!server.enabled || !server.encryptedToken || server.status === 'auth_failed' || syncInProgress.has(server.id)) continue;
+    if (now < (syncRetryAfter.get(server.id) ?? 0)) continue;
+    const lastSync = server.lastSyncAt ? Date.parse(server.lastSyncAt) : 0;
+    const intervalMs = Math.max(30, server.refreshSeconds) * 1000;
+    if (lastSync && now - lastSync < intervalMs) continue;
+    try { await syncGoodPriceServer(server.id); } catch { /* the failure is stored in the local journal */ }
+  }
+}
 function getOptions(): AnalysisOptions {
   const row = db.select().from(settings).where(eq(settings.key, 'analysis')).get();
   if (!row) return DEFAULT_ANALYSIS_OPTIONS;
@@ -148,18 +194,12 @@ app.post('/api/servers/:id/sync', async (request, reply) => {
     error: 'Для загрузки рынка нужен world ticket GoodPrice. Сохраните токен в карточке сервера.',
   });
   try {
-    const token = decryptSecret(existing.encryptedToken);
-    const snapshot = await fetchGoodPriceSnapshot(existing.goodPriceUrl, token, id);
-    persistSnapshot(snapshot);
+    const snapshot = await syncGoodPriceServer(id);
     return { ok: true, imported: snapshot.offers.length, capturedAt: snapshot.capturedAt };
   } catch (error) {
-    const detail = safeError(error);
     const statusCode = typeof error === 'object' && error && 'statusCode' in error
       ? Number((error as { statusCode?: unknown }).statusCode) : undefined;
-    const nextStatus = statusCode === 401 || statusCode === 403 ? 'auth_failed' : 'sync_error';
-    db.update(servers).set({ status: nextStatus, lastError: detail }).where(eq(servers.id, id)).run();
-    logEvent('error', 'market_sync_failed', detail, id);
-    return reply.code(statusCode === 401 || statusCode === 403 ? 401 : 502).send({ error: detail });
+    return reply.code(statusCode === 401 || statusCode === 403 ? 401 : 502).send({ error: safeError(error) });
   }
 });
 
@@ -300,4 +340,7 @@ const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 3000);
 await app.listen({ host, port });
 app.log.info(`ECOInter API listening on http://${host}:${port}`);
-if (!canEncryptSecrets()) app.log.warn('ECOINTER_MASTER_KEY is not set: token persistence is disabled');
+if (!canEncryptSecrets()) app.log.warn('Local token encryption is unavailable; GoodPrice token persistence is disabled.');
+const syncScheduler = setInterval(() => { void syncDueServers(); }, 15_000);
+cconst_scheduler.unref();
+void syncDueServers();
