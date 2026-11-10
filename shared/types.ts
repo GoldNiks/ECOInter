@@ -46,6 +46,8 @@ export interface AnalysisOptions {
   maxDurationMs: number;
   minProfit: string;
   minRoiPercent: string;
+  /** Separate quality floor for multi-step routes. */
+  minRouteRoiPercent: string;
   startingCapitalByCurrency?: Record<string, string>;
   feesByServer?: Record<string, FeePolicy>;
   maxQuoteAgeSeconds: number;
@@ -104,6 +106,8 @@ export interface RouteLeg {
   unspentInputBalance: string;
   buyOfferId: string;
   sellOfferId: string;
+  buyOfferIds: string[];
+  sellOfferIds: string[];
 }
 
 export interface MultiStepOpportunity {
