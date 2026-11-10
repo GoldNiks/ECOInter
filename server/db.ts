@@ -49,4 +49,14 @@ if (!offerColumns.has('store_name')) sqlite.exec('ALTER TABLE offers ADD COLUMN 
 if (!offerColumns.has('trade_allowed')) sqlite.exec('ALTER TABLE offers ADD COLUMN trade_allowed INTEGER NOT NULL DEFAULT 1');
 if (!offerColumns.has('trade_restriction')) sqlite.exec('ALTER TABLE offers ADD COLUMN trade_restriction TEXT');
 
+// Old GoodPrice snapshots have no store identity, so their storage compatibility
+// cannot be checked. Keep their price history, but do not use them as executable
+// quotes until the forced startup sync replaces them with store-aware data.
+sqlite.prepare(`
+  UPDATE offers
+  SET trade_allowed = 0,
+      trade_restriction = 'Снимок GoodPrice создан до проверки ограничений хранилищ; требуется повторная синхронизация.'
+  WHERE source_id = 'GoodPrice' AND store_name IS NULL AND trade_allowed = 1
+`).run();
+
 export const db = drizzle(sqlite, { schema });
