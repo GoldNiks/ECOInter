@@ -211,14 +211,30 @@ function executeEdge(edge: ConversionEdge, balance: bigint, options: AnalysisOpt
     buyCost: moneyString(buyCost), sellRevenue: moneyString(sellGross),
     feesFrom: moneyString(buyFee), feesTo: moneyString(sellFees),
     inputBalance: moneyString(balance), outputBalance: moneyString(output),
+    unspentInputBalance: moneyString(sub(balance, inputUsed)),
     buyOfferId: edge.buy.id, sellOfferId: edge.sell.id,
   };
 }
 
+/** Search diagnostics prevent a bounded search from being misreported as a definitive empty result. */
+export interface RouteSearchStats {
+  edgeCount: number;
+  combinations: number;
+  durationMs: number;
+  truncated: boolean;
+  stopReason: 'max_combinations' | 'max_duration' | null;
+}
+
+export interface RouteSearchResult {
+  routes: MultiStepOpportunity[];
+  stats: RouteSearchStats;
+}
+
 /** Search currency cycles via goods. Every leg is a buy+sell pair; routes are independent of direct-deal search. */
-export function findMultiStepRoutes(
+export function findMultiStepRoutesDetailed(
   offers: MarketOffer[], options: AnalysisOptions, now = Date.now(),
-): MultiStepOpportunity[] {
+): RouteSearchResult {
+  const startedAt = Date.now();
   const edges = buildEdges(offers, options, now);
   const results: MultiStepOpportunity[] = [];
   const maxLegs = Math.max(2, Math.floor(options.maxOperations / 2));
@@ -239,11 +255,18 @@ export function findMultiStepRoutes(
         return start ? [{ start, explicitCapital: capital }] : [];
       })
     : [...currencyLabels.values()].map((start) => ({ start, explicitCapital: undefined as string | undefined }));
+  const outgoingByCurrency = new Map<string, ConversionEdge[]>();
+  for (const edge of edges) {
+    const key = currencyKey(edge.fromCurrency);
+    const bucket = outgoingByCurrency.get(key) ?? [];
+    bucket.push(edge);
+    outgoingByCurrency.set(key, bucket);
+  }
+  const offerById = new Map(offers.map((offer) => [offer.id, offer]));
   const seen = new Set<string>();
-
-  const startedAt = Date.now();
   let combinations = 0;
-  let stopped = false;
+  let stopped = Date.now() - startedAt >= options.maxDurationMs;
+  let stopReason: RouteSearchStats['stopReason'] = stopped ? 'max_duration' : null;
   for (const { start, explicitCapital } of starts) {
     if (stopped) break;
     const startKey = currencyKey(start);
@@ -259,13 +282,14 @@ export function findMultiStepRoutes(
     if (initial <= ZERO || (options.maxStartingCapital && initial > money(options.maxStartingCapital))) continue;
 
     const walk = (currency: string, balance: bigint, legs: RouteLeg[], usedItems: Set<string>, seenCurrencies: Set<string>) => {
-      if (legs.length >= maxLegs) return;
+      if (stopped || legs.length >= maxLegs) return;
       const currentKey = currencyKey(currency);
-      const candidates = edges.filter((e) => currencyKey(e.fromCurrency) === currentKey
-        && e.serverId === (legs[0]?.serverId ?? e.serverId) && !usedItems.has(e.itemId));
+      const candidates = (outgoingByCurrency.get(currentKey) ?? []).filter((e) =>
+        e.serverId === (legs[0]?.serverId ?? e.serverId) && !usedItems.has(e.itemId));
       for (const edge of candidates) {
+        if (combinations >= options.maxCombinations) { stopped = true; stopReason = 'max_combinations'; break; }
+        if (Date.now() - startedAt >= options.maxDurationMs) { stopped = true; stopReason = 'max_duration'; break; }
         combinations++;
-        if (combinations > options.maxCombinations || Date.now() - startedAt > options.maxDurationMs) { stopped = true; break; }
         const nextCurrencyKey = currencyKey(edge.toCurrency);
         const closesCycle = nextCurrencyKey === startKey;
         if (!closesCycle && seenCurrencies.has(nextCurrencyKey)) continue;
@@ -279,11 +303,15 @@ export function findMultiStepRoutes(
           const routeId = nextLegs.map((x) => `${x.buyOfferId}:${x.sellOfferId}`).join('|');
           if (seen.has(routeId)) continue;
           seen.add(routeId);
-          const finalCapital = money(leg.outputBalance);
+          // The first buy can be limited by available listing quantity. Cash that
+          // was not spent remains in the starting currency and must not vanish
+          // from the account balance when the route closes its cycle.
+          const startingReserve = money(nextLegs[0].unspentInputBalance);
+          const finalCapital = add(money(leg.outputBalance), startingReserve);
           const profit = sub(finalCapital, initial);
           const capital = initial;
           if (profit <= ZERO || profit < money(options.minProfit) || ratioPercent(profit, capital) < money(options.minRoiPercent)) continue;
-          const usedQuotes = nextLegs.flatMap((x) => [offers.find((o) => o.id === x.buyOfferId), offers.find((o) => o.id === x.sellOfferId)]).filter(Boolean) as MarketOffer[];
+          const usedQuotes = nextLegs.flatMap((x) => [offerById.get(x.buyOfferId), offerById.get(x.sellOfferId)]).filter(Boolean) as MarketOffer[];
           results.push({
             id: `route:${start}:${routeId}`, kind: 'multi_step', serverId: edge.serverId,
             startCurrency: start, endCurrency: start, initialCapital: moneyString(capital),
@@ -301,8 +329,19 @@ export function findMultiStepRoutes(
     };
     walk(start, initial, [], new Set(), new Set([startKey]));
   }
-  return results.sort((a, b) => compareProfit(b.netProfit, a.netProfit)).slice(0, options.maxResults);
+  const routes = results.sort((a, b) => compareProfit(b.netProfit, a.netProfit)).slice(0, options.maxResults);
+  return {
+    routes,
+    stats: { edgeCount: edges.length, combinations, durationMs: Date.now() - startedAt, truncated: stopped, stopReason },
+  };
 }
+
+export function findMultiStepRoutes(
+  offers: MarketOffer[], options: AnalysisOptions, now = Date.now(),
+): MultiStepOpportunity[] {
+  return findMultiStepRoutesDetailed(offers, options, now).routes;
+}
+
 export function analyzeMarket(offers: MarketOffer[], options: AnalysisOptions, now = Date.now()): Opportunity[] {
   // These passes intentionally run independently; one search type never suppresses the other.
   const direct = findDirectOpportunities(offers, options, now);
@@ -317,5 +356,5 @@ export function analyzeMarket(offers: MarketOffer[], options: AnalysisOptions, n
 
 export const DEFAULT_ANALYSIS_OPTIONS: AnalysisOptions = {
   maxOperations: 6, maxUniqueItems: 6, maxIntermediateCurrencies: 4,
-  maxResults: 100, maxCombinations: 25000, maxDurationMs: 2000, minProfit: '0', minRoiPercent: '0', maxQuoteAgeSeconds: 900,
+  maxResults: 100, maxCombinations: 100000, maxDurationMs: 5000, minProfit: '0', minRoiPercent: '0', maxQuoteAgeSeconds: 900,
 };
