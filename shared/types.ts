@@ -22,6 +22,13 @@ export interface MarketOffer {
   tradeRestriction?: string;
 }
 
+export interface RestrictedOfferSummary {
+  storeName: string;
+  count: number;
+  sampleItems: string[];
+  reason: string;
+}
+
 export interface FeePolicy {
   buyPercent: string;
   sellPercent: string;
