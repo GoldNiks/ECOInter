@@ -48,6 +48,30 @@ test('multi-step engine reproduces the two-currency example exactly', () => {
   assert.deepEqual(route.legs.map((x) => [x.itemName, x.quantity]), [['Товар A', 3], ['Товар B', 2]]);
 });
 
+test('capital above the available first lot preserves the unspent starting-currency reserve', () => {
+  const found = findMultiStepRoutes(routeFixture, {
+    ...options, startingCapitalByCurrency: { RELAX: '1000' },
+  }, Date.parse(now));
+  const route = found.find((x) => x.startCurrency === 'RELAX');
+  assert.ok(route, 'a route must still be found when the starting capital exceeds the first listing volume');
+  assert.equal(route.initialCapital, '1000');
+  assert.equal(route.finalCapital, '1350');
+  assert.equal(route.netProfit, '350');
+  assert.equal(route.legs[0].unspentInputBalance, '850');
+  assert.equal(route.legs[1].unspentInputBalance, '0');
+});
+
+test('route search is not blocked by a hidden maximum starting-capital setting', () => {
+  const found = findMultiStepRoutes(routeFixture, {
+    ...options, startingCapitalByCurrency: { RELAX: '1000000' },
+  }, Date.parse(now));
+  const route = found.find((x) => x.startCurrency === 'RELAX');
+  assert.ok(route);
+  assert.equal(route.initialCapital, '1000000');
+  assert.equal(route.finalCapital, '1000350');
+  assert.equal(route.netProfit, '350');
+});
+
 test('route start currency resolves regardless of letter case', () => {
   const market: MarketOffer[] = [
     offer('m-ask', 'A', 'Товар A', 'buy', 'Мухоморск Credit', '150', 3),
