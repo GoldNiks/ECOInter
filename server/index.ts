@@ -25,11 +25,16 @@ const serverInput = z.object({
   refreshSeconds: z.number().int().min(30).max(86400).default(300), token: z.string().optional(),
 });
 const analysisOptionsSchema = z.object({
-  maxOperations: z.number().int().min(2).max(12).default(6), maxUniqueItems: z.number().int().min(1).max(20).default(6),
-  maxIntermediateCurrencies: z.number().int().min(1).max(12).default(4), maxResults: z.number().int().min(1).max(1000).default(100),
-  maxCombinations: z.number().int().min(100).max(1_000_000).default(25000), maxDurationMs: z.number().int().min(100).max(30000).default(2000),
+  maxOperations: z.number().int().min(2).max(12).default(8), maxUniqueItems: z.number().int().min(1).max(20).default(8),
+  maxIntermediateCurrencies: z.number().int().min(1).max(12).default(6), maxResults: z.number().int().min(1).max(1000).default(250),
+  maxCombinations: z.number().int().min(100).max(1_000_000).default(250000), maxDurationMs: z.number().int().min(100).max(30000).default(8000),
   minProfit: nonNegativeMoney.default('0'), minRoiPercent: nonNegativeMoney.default('0'), minRouteRoiPercent: nonNegativeMoney.default('5'), maxQuoteAgeSeconds: z.number().int().min(1).max(604800).default(900),
   startingCapitalByCurrency: z.record(z.string(), nonNegativeMoney).optional(),
+  storeLocations: z.record(z.string(), z.object({
+    x: z.number().finite().optional(),
+    z: z.number().finite().optional(),
+  })).optional(),
+  storeAcceptedItems: z.record(z.string(), z.array(z.string().trim().min(1))).optional(),
   feesByServer: z.record(z.string(), z.object({
     buyPercent: nonNegativeMoney, sellPercent: nonNegativeMoney, taxPercent: nonNegativeMoney, buyFixed: nonNegativeMoney, sellFixed: nonNegativeMoney,
   })).optional(),
@@ -39,10 +44,14 @@ function logEvent(level: string, type: string, message: string, serverId?: strin
   db.insert(events).values({ level, type, message, serverId: serverId ?? null, createdAt: new Date().toISOString() }).run();
 }
 
-function summarizeRestrictedOffers(marketOffers: MarketOffer[]): RestrictedOfferSummary[] {
+function summarizeRestrictedOffers(marketOffers: MarketOffer[], options: AnalysisOptions = DEFAULT_ANALYSIS_OPTIONS): RestrictedOfferSummary[] {
   const grouped = new Map<string, { count: number; items: Set<string>; reason: string }>();
   for (const offer of marketOffers) {
-    if (offer.tradeAllowed !== false) continue;
+    const storeKey = `${offer.serverId}::${offer.storeId?.trim() || offer.storeName?.trim() || 'unknown'}`;
+    const allowed = options.storeAcceptedItems?.[storeKey] ?? [];
+    const manuallyConfirmed = allowed.some((name) =>
+      name.trim().normalize('NFKC').toLocaleLowerCase('ru-RU') === offer.itemName.trim().normalize('NFKC').toLocaleLowerCase('ru-RU'));
+    if (offer.tradeAllowed !== false || manuallyConfirmed) continue;
     const storeName = offer.storeName?.trim() || 'Специализированный магазин';
     const entry = grouped.get(storeName) ?? {
       count: 0, items: new Set<string>(),
@@ -267,7 +276,7 @@ app.post('/api/routes/search', async (request, reply) => {
   const marketOffers = db.select().from(offers).all() as MarketOffer[];
   const options = { ...getOptions(), startingCapitalByCurrency: { [parsed.data.currency]: parsed.data.capital } };
   const search = findMultiStepRoutesDetailed(marketOffers, options);
-  const restrictions = summarizeRestrictedOffers(marketOffers);
+  const restrictions = summarizeRestrictedOffers(marketOffers, options);
   return {
     routes: search.routes, count: search.routes.length, analyzedOffers: marketOffers.length,
     excludedOffers: restrictedOfferCount(restrictions), restrictions, searchStats: search.stats,
@@ -277,8 +286,9 @@ app.post('/api/routes/search', async (request, reply) => {
 app.get('/api/opportunities', async (request) => {
   const query = request.query as { kind?: string };
   const marketOffers = db.select().from(offers).all() as MarketOffer[];
-  const results = analyzeMarket(marketOffers, getOptions());
-  const restrictions = summarizeRestrictedOffers(marketOffers);
+  const options = getOptions();
+  const results = analyzeMarket(marketOffers, options);
+  const restrictions = summarizeRestrictedOffers(marketOffers, options);
   const summary = { analyzedOffers: marketOffers.length, excludedOffers: restrictedOfferCount(restrictions), restrictions };
   if (!query.kind || query.kind === 'all') return { opportunities: results, count: results.length, ...summary };
   const filtered = results.filter((x) => x.kind === query.kind);
