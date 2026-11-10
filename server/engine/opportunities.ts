@@ -560,14 +560,20 @@ export function analyzeMarket(offers: MarketOffer[], options: AnalysisOptions, n
   const direct = findDirectOpportunities(offers, options, now);
   const routes = findMultiStepRoutes(offers, options, now);
   const interserver = findInterserverDifferences(offers, options, now);
-  return [...direct, ...routes, ...interserver].sort((a, b) => {
-    const ap = a.kind === 'interserver' ? a.priceGap : a.netProfit;
-    const bp = b.kind === 'interserver' ? b.priceGap : b.netProfit;
-    return compareProfit(bp, ap);
-  });
+  const quality = (item: Opportunity): number => {
+    if (item.kind === 'interserver') return -1;
+    if (item.kind === 'direct') return qualityScore(
+      item.netProfit, item.distanceUnits ?? null, item.offerCount ?? 0, item.quantity,
+    );
+    return qualityScore(
+      item.netProfit, item.distanceUnits ?? null, item.offerCount ?? 0,
+      item.legs.reduce((sum, leg) => sum + leg.quantity, 0),
+    );
+  };
+  return [...direct, ...routes, ...interserver].sort((a, b) => quality(b) - quality(a));
 }
 
 export const DEFAULT_ANALYSIS_OPTIONS: AnalysisOptions = {
-  maxOperations: 6, maxUniqueItems: 6, maxIntermediateCurrencies: 4,
-  maxResults: 100, maxCombinations: 100000, maxDurationMs: 5000, minProfit: '0', minRoiPercent: '0', minRouteRoiPercent: '5', maxQuoteAgeSeconds: 900,
+  maxOperations: 8, maxUniqueItems: 8, maxIntermediateCurrencies: 6,
+  maxResults: 250, maxCombinations: 250000, maxDurationMs: 8000, minProfit: '0', minRoiPercent: '0', minRouteRoiPercent: '5', maxQuoteAgeSeconds: 900,
 };
