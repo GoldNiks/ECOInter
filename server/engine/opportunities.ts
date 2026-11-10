@@ -165,8 +165,8 @@ export function findDirectOpportunities(
     }
   }
   return results.sort((a, b) => compareQuality(
-    b.netProfit, b.distanceUnits ?? null, b.offerCount ?? 0, b.quantity,
     a.netProfit, a.distanceUnits ?? null, a.offerCount ?? 0, a.quantity,
+    b.netProfit, b.distanceUnits ?? null, b.offerCount ?? 0, b.quantity,
   )).slice(0, options.maxResults);
 }
 
@@ -540,8 +540,8 @@ export function findMultiStepRoutesDetailed(
     walk(start, initial, [], new Set(), new Set([startKey]));
   }
   const routes = results.sort((a, b) => compareQuality(
-    b.netProfit, b.distanceUnits ?? null, b.offerCount ?? 0, b.legs.reduce((sum, leg) => sum + leg.quantity, 0),
     a.netProfit, a.distanceUnits ?? null, a.offerCount ?? 0, a.legs.reduce((sum, leg) => sum + leg.quantity, 0),
+    b.netProfit, b.distanceUnits ?? null, b.offerCount ?? 0, b.legs.reduce((sum, leg) => sum + leg.quantity, 0),
   )).slice(0, options.maxResults);
   return {
     routes,
