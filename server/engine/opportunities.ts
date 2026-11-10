@@ -154,6 +154,10 @@ interface ConversionEdge {
   sell: MarketOffer;
   capacity: number;
 }
+function currencyKey(currency: string): string {
+  return currency.trim().normalize('NFKC').toLocaleLowerCase('ru-RU');
+}
+
 function buildEdges(offers: MarketOffer[], options: AnalysisOptions, now: number): ConversionEdge[] {
   const eligible = offers.filter((o) => validOffer(o) && fresh(o, options.maxQuoteAgeSeconds, now));
   const grouped = new Map<string, MarketOffer[]>();
@@ -166,10 +170,12 @@ function buildEdges(offers: MarketOffer[], options: AnalysisOptions, now: number
     const buys = group.filter((o) => o.action === 'buy');
     const sells = group.filter((o) => o.action === 'sell');
     for (const buy of buys) for (const sell of sells) {
-      if (buy.currency === sell.currency || buy.serverId !== sell.serverId) continue;
+      // Currency names come from player-configured GoodPrice stores. Match names
+      // without case sensitivity so typing "CREDIT" finds "Credit" in the feed.
+      if (currencyKey(buy.currency) === currencyKey(sell.currency) || buy.serverId !== sell.serverId) continue;
       edges.push({
         key: `${buy.id}->${sell.id}`, serverId: buy.serverId, itemId: buy.itemId,
-        itemName: buy.itemName, fromCurrency: buy.currency, toCurrency: sell.currency,
+        itemName: buy.itemName, fromCurrency: buy.currency.trim(), toCurrency: sell.currency.trim(),
         buy, sell, capacity: Math.min(buy.quantity, sell.quantity),
       });
     }
@@ -211,24 +217,38 @@ export function findMultiStepRoutes(
   offers: MarketOffer[], options: AnalysisOptions, now = Date.now(),
 ): MultiStepOpportunity[] {
   const edges = buildEdges(offers, options, now);
-  const currencies = [...new Set(edges.map((e) => e.fromCurrency))];
   const results: MultiStepOpportunity[] = [];
   const maxLegs = Math.max(2, Math.floor(options.maxOperations / 2));
   const startCapital = options.startingCapitalByCurrency ?? {};
-  const starts = Object.keys(startCapital).length ? Object.keys(startCapital) : currencies;
+  const currencyLabels = new Map<string, string>();
+  for (const edge of edges) {
+    if (!currencyLabels.has(currencyKey(edge.fromCurrency))) currencyLabels.set(currencyKey(edge.fromCurrency), edge.fromCurrency);
+    if (!currencyLabels.has(currencyKey(edge.toCurrency))) currencyLabels.set(currencyKey(edge.toCurrency), edge.toCurrency);
+  }
+
+  // Resolve a user-entered currency to the exact spelling used by GoodPrice.
+  // Keep the configured capital alongside it; object lookup by original case
+  // would otherwise lose the amount after canonicalizing the currency name.
+  const requestedStarts = Object.entries(startCapital);
+  const starts = requestedStarts.length
+    ? requestedStarts.flatMap(([requested, capital]) => {
+        const start = currencyLabels.get(currencyKey(requested));
+        return start ? [{ start, explicitCapital: capital }] : [];
+      })
+    : [...currencyLabels.values()].map((start) => ({ start, explicitCapital: undefined as string | undefined }));
   const seen = new Set<string>();
 
   const startedAt = Date.now();
   let combinations = 0;
   let stopped = false;
-  for (const start of starts) {
+  for (const { start, explicitCapital } of starts) {
     if (stopped) break;
-    const outgoing = edges.filter((e) => e.fromCurrency === start);
+    const startKey = currencyKey(start);
+    const outgoing = edges.filter((e) => currencyKey(e.fromCurrency) === startKey);
     if (!outgoing.length) continue;
-    const explicit = startCapital[start];
-    const assumedCapital = explicit === undefined;
-    const initial = explicit !== undefined
-      ? money(explicit)
+    const assumedCapital = explicitCapital === undefined;
+    const initial = explicitCapital !== undefined
+      ? money(explicitCapital)
       : outgoing.reduce((max, edge) => {
           const required = add(money(edge.buy.totalPrice), add(percentOfSafe(money(edge.buy.totalPrice), money(feePolicy(options, edge.serverId).buyPercent)), money(feePolicy(options, edge.serverId).buyFixed)));
           return required > max ? required : max;
@@ -237,12 +257,15 @@ export function findMultiStepRoutes(
 
     const walk = (currency: string, balance: bigint, legs: RouteLeg[], usedItems: Set<string>, seenCurrencies: Set<string>) => {
       if (legs.length >= maxLegs) return;
-      const candidates = edges.filter((e) => e.fromCurrency === currency && e.serverId === (legs[0]?.serverId ?? e.serverId) && !usedItems.has(e.itemId));
+      const currentKey = currencyKey(currency);
+      const candidates = edges.filter((e) => currencyKey(e.fromCurrency) === currentKey
+        && e.serverId === (legs[0]?.serverId ?? e.serverId) && !usedItems.has(e.itemId));
       for (const edge of candidates) {
         combinations++;
         if (combinations > options.maxCombinations || Date.now() - startedAt > options.maxDurationMs) { stopped = true; break; }
-        const closesCycle = edge.toCurrency === start;
-        if (!closesCycle && seenCurrencies.has(edge.toCurrency)) continue;
+        const nextCurrencyKey = currencyKey(edge.toCurrency);
+        const closesCycle = nextCurrencyKey === startKey;
+        if (!closesCycle && seenCurrencies.has(nextCurrencyKey)) continue;
         if (!closesCycle && seenCurrencies.size - 1 >= options.maxIntermediateCurrencies) continue;
         if (usedItems.size >= options.maxUniqueItems) continue;
         const leg = executeEdge(edge, balance, options);
@@ -269,15 +292,14 @@ export function findMultiStepRoutes(
           continue;
         }
         const nextUsed = new Set(usedItems); nextUsed.add(edge.itemId);
-        const nextCurrencies = new Set(seenCurrencies); nextCurrencies.add(edge.toCurrency);
+        const nextCurrencies = new Set(seenCurrencies); nextCurrencies.add(nextCurrencyKey);
         walk(edge.toCurrency, money(leg.outputBalance), nextLegs, nextUsed, nextCurrencies);
       }
     };
-    walk(start, initial, [], new Set(), new Set([start]));
+    walk(start, initial, [], new Set(), new Set([startKey]));
   }
   return results.sort((a, b) => compareProfit(b.netProfit, a.netProfit)).slice(0, options.maxResults);
 }
-
 export function analyzeMarket(offers: MarketOffer[], options: AnalysisOptions, now = Date.now()): Opportunity[] {
   // These passes intentionally run independently; one search type never suppresses the other.
   const direct = findDirectOpportunities(offers, options, now);
