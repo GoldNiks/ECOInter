@@ -61,6 +61,57 @@ test('ignores empty slots, disabled offers, sentinel prices and zero-balance buy
   assert.equal(snapshot.offers.length, 0);
 });
 
+test('flags incoming buyer orders at specialized profession markets', () => {
+  const snapshot = normalizeGoodPriceStores({
+    Stores: [
+      {
+        Name: 'Охотничий рынок', Owner: 'Hunter Guild', Balance: 500,
+        CurrencyName: 'Мухоморск Credit', Enabled: true,
+        AllOffers: [
+          { ItemName: 'Исследования базовой геологии', Buying: true, Price: 100, Quantity: 5, MaxNumWanted: 5, Enabled: true },
+          { ItemName: 'Шкура', Buying: true, Price: 10, Quantity: 20, MaxNumWanted: 20, Enabled: true },
+          { ItemName: 'Рыба', Buying: false, Price: 5, Quantity: 20, Enabled: true },
+        ],
+      },
+      {
+        Name: 'Обычный магазин игрока', Owner: 'Alice', Balance: 500,
+        CurrencyName: 'Мухоморск Credit', Enabled: true,
+        AllOffers: [
+          { ItemName: 'Исследования базовой геологии', Buying: true, Price: 100, Quantity: 5, MaxNumWanted: 5, Enabled: true },
+        ],
+      },
+    ],
+  }, 'server-1', '2026-11-11T12:00:00.000Z');
+
+  const research = snapshot.offers.find((offer) => offer.itemName === 'Исследования базовой геологии' && offer.storeName === 'Охотничий рынок');
+  const hide = snapshot.offers.find((offer) => offer.itemName === 'Шкура');
+  const fishAsk = snapshot.offers.find((offer) => offer.itemName === 'Рыба');
+  const normalShop = snapshot.offers.find((offer) => offer.storeName === 'Обычный магазин игрока');
+
+  assert.ok(research);
+  assert.equal(research.tradeAllowed, false);
+  assert.match(research.tradeRestriction ?? '', /охотничий рынок/iu);
+  assert.equal(research.storeName, 'Охотничий рынок');
+  assert.ok(research.storeId);
+  assert.ok(hide);
+  assert.equal(hide.tradeAllowed, false);
+  assert.ok(fishAsk);
+  assert.equal(fishAsk.tradeAllowed, true, 'items sold by the market are not blocked by its inbound-storage rule');
+  assert.ok(normalShop);
+  assert.equal(normalShop.tradeAllowed, true, 'ordinary player shops stay eligible');
+});
+
+test('detects English MarketMod profession market names', () => {
+  const snapshot = normalizeGoodPriceStores({
+    Stores: [{
+      Name: 'Hunter Market', Owner: 'Guild', Balance: 100,
+      CurrencyName: 'Credits', Enabled: true,
+      AllOffers: [{ ItemName: 'Basic Geology Research', Buying: true, Price: 10, Quantity: 1, MaxNumWanted: 1 }],
+    }],
+  }, 'server-1');
+  assert.equal(snapshot.offers[0].tradeAllowed, false);
+});
+
 test('keeps deterministic offer IDs across repeated snapshots', () => {
   const input = {
     Stores: [{
