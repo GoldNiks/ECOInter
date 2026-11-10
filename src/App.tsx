@@ -48,17 +48,33 @@ export default function App() {
   const activeOpps = useMemo(() => opportunities.filter((o) => o.kind !== 'interserver'), [opportunities]);
   const showNotice = useCallback((message: string) => { setNotice(message); window.setTimeout(() => setNotice(''), 5000); }, []);
 
+  const sourceState = useMemo(() => {
+    const statuses = servers.map((server) => server.status);
+    if (statuses.includes('imported_normalized')) {
+      const latest = servers.filter((server) => server.status === 'imported_normalized')
+        .map((server) => server.lastSyncAt).filter(Boolean).sort().at(-1);
+      return { dot: 'online', title: 'Рынок синхронизирован', detail: latest ? `Последнее обновление: ${time(latest)}` : 'Рыночные данные сохранены локально' };
+    }
+    if (statuses.includes('api_verified')) return { dot: 'online', title: 'API GoodPrice подтверждён', detail: 'API отвечает; загрузите рыночный снимок' };
+    if (statuses.includes('auth_required')) return { dot: 'warning', title: 'Требуется world ticket', detail: 'Сохраните токен GoodPrice в карточке сервера' };
+    if (statuses.includes('auth_failed')) return { dot: 'offline', title: 'Токен не принят', detail: 'Скопируйте свежий world ticket из GoodPrice' };
+    if (statuses.includes('sync_error')) return { dot: 'offline', title: 'Ошибка синхронизации', detail: 'Подробности доступны в журнале событий' };
+    if (statuses.includes('reachable_unverified')) return { dot: 'warning', title: 'Адрес отвечает · API не проверен', detail: 'Проверьте API и авторизацию GoodPrice' };
+    if (statuses.includes('unavailable')) return { dot: 'offline', title: 'Источник недоступен', detail: 'Проверьте адрес, порт и сеть' };
+    return { dot: 'warning', title: 'Источник не проверен', detail: servers.length ? 'Проверьте подключение GoodPrice' : 'Добавьте сервер GoodPrice' };
+  }, [servers]);
+
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark">E</div><div><strong>ECOInter</strong><span>MARKET ANALYZER</span></div></div>
       <div className="workspace"><span className="status-dot offline" /> Локальная аналитика <ChevronDown size={14} /></div>
       <div className="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</div>
       <nav>{NAV.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => setPage(id)}><Icon size={17} /><span>{label}</span>{id === 'opportunities' && activeOpps.length > 0 && <em>{activeOpps.length}</em>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="source-card"><div className="source-head"><span className="status-dot warning" /> GoodPrice</div><p>Источник не проверен</p><small>Нет подтверждённого соединения</small></div><div className="local-note"><ShieldCheck size={14} /> Данные остаются локально</div></div>
+      <div className="sidebar-bottom"><div className="source-card"><div className="source-head"><span className={`status-dot ${sourceState.dot}`} /> GoodPrice</div><p>{sourceState.title}</p><small>{sourceState.detail}</small></div><div className="local-note"><ShieldCheck size={14} /> Данные остаются локально</div></div>
     </aside>
 
     <main className="main-area">
-      <header className="topbar"><div className="crumb">ECOInter <span>/</span> <b>{title}</b></div><div className="top-actions"><div className="api-state"><span className="status-dot warning" /> Источник не подтверждён</div><button className="icon-button" onClick={() => void refresh()} title="Обновить"><RefreshCw size={16} className={loading ? 'spin' : ''} /></button><div className="avatar">EI</div></div></header>
+      <header className="topbar"><div className="crumb">ECOInter <span>/</span> <b>{title}</b></div><div className="top-actions"><div className="api-state"><span className={`status-dot ${sourceState.dot}`} /> {sourceState.title}</div><button className="icon-button" onClick={() => void refresh()} title="Обновить"><RefreshCw size={16} className={loading ? 'spin' : ''} /></button><div className="avatar">EI</div></div></header>
       <div className="page-wrap">
         {error && <div className="alert error"><AlertTriangle size={17} /> {error} <button onClick={() => void refresh()}>Повторить</button></div>}
         {notice && <div className="alert success">{notice}</div>}
