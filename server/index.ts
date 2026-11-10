@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, sqlite } from './db.ts';
@@ -353,11 +355,20 @@ app.setErrorHandler((error, request, reply) => {
   reply.code(500).send({ error: `Ошибка ${request.method} ${route}: ${detail}` });
 });
 
-const host = process.env.HOST ?? '127.0.0.1';
-const port = Number(process.env.PORT ?? 3000);
-await app.listen({ host, port });
-app.log.info(`ECOInter API listening on http://${host}:${port}`);
-if (!canEncryptSecrets()) app.log.warn('Local token encryption is unavailable; GoodPrice token persistence is disabled.');
-const syncScheduler = setInterval(() => { void syncDueServers(); }, 15_000);
-syncScheduler.unref();
-void syncDueServers();
+export async function startServer() {
+  const host = process.env.HOST ?? '127.0.0.1';
+  const port = Number(process.env.PORT ?? 3000);
+  await app.listen({ host, port });
+  app.log.info(`ECOInter API listening on http://${host}:${port}`);
+  if (!canEncryptSecrets()) app.log.warn('Local token encryption is unavailable; GoodPrice token persistence is disabled.');
+  const syncScheduler = setInterval(() => { void syncDueServers(); }, 15_000);
+  syncScheduler.unref();
+  void syncDueServers();
+}
+
+// Importing the API in tests must not bind a port or start background sync jobs.
+const isMainModule = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+if (isMainModule) await startServer();
+
+export { app };
