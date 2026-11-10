@@ -152,7 +152,9 @@ function OpportunityTable({ items, compact = false, onChoose, onSimulate }: { it
     const currency = item.kind === 'multi_step' ? item.startCurrency : item.currency;
     const roi = item.kind === 'interserver' ? 'справочно' : `${fmt(item.roiPercent)}%`;
     const distance = item.kind !== 'interserver' && item.distanceUnits != null ? `${fmt(item.distanceUnits, 1)} ед.` : 'не задано';
-    const offerCount = item.kind === 'interserver' ? '—' : item.offerCount ?? item.buyOfferIds.length + item.sellOfferIds.length;
+    const offerCount = item.kind === 'interserver' ? '—' : item.offerCount ?? (item.kind === 'direct'
+      ? item.buyOfferIds.length + item.sellOfferIds.length
+      : new Set(item.legs.flatMap((leg) => [...leg.buyOfferIds, ...leg.sellOfferIds])).size);
     return <tr key={item.id} className={onChoose ? 'opportunity-row' : undefined} onClick={onChoose ? () => onChoose(item) : undefined}>
       <td><strong>{name}</strong><small>{item.kind === 'multi_step' ? `${item.legs.length} товара · ${item.operations} операции` : `${item.quantity} ед.`}</small></td>
       <td><span className={`type-pill ${item.kind}`}>{item.kind === 'direct' ? 'Прямая' : item.kind === 'multi_step' ? 'Маршрут' : 'Разница цен'}</span></td>
