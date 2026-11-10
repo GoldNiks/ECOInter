@@ -6,12 +6,12 @@ import { z } from 'zod';
 import { db, sqlite } from './db.ts';
 import { events, offers, priceHistory, servers, settings, simulations } from './schema.ts';
 import { analyzeMarket, DEFAULT_ANALYSIS_OPTIONS, findMultiStepRoutes } from './engine/opportunities.ts';
-import { canEncryptSecrets, encryptSecret } from './services/crypto.ts';
+import { canEncryptSecrets, decryptSecret, encryptSecret } from './services/crypto.ts';
 import { money, moneyString } from './domain/money.ts';
-import { parseNormalizedSnapshot, probeGoodPrice } from './services/goodprice.ts';
-import type { AnalysisOptions, MarketOffer } from '../shared/types.ts';
+import { fetchGoodPriceSnapshot, parseNormalizedSnapshot, probeGoodPrice } from './services/goodprice.ts';
+import type { AnalysisOptions, MarketOffer, MarketSnapshot } from '../shared/types.ts';
 
-const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', redact: ['req.headers.authorization', 'req.headers.x-api-key'] } });
+const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', redact: ['req.headers.authorization', 'req.headers.x-api-key', 'req.headers.x-auth-token'] } });
 await app.register(cors, { origin: ['http://127.0.0.1:5173', 'http://localhost:5173'] });
 
 const nonNegativeMoney = z.string().regex(/^\d+(?:\.\d{1,8})?$/);
@@ -35,6 +35,27 @@ const analysisOptionsSchema = z.object({
 
 function logEvent(level: string, type: string, message: string, serverId?: string) {
   db.insert(events).values({ level, type, message, serverId: serverId ?? null, createdAt: new Date().toISOString() }).run();
+}
+
+function persistSnapshot(snapshot: MarketSnapshot) {
+  const now = new Date().toISOString();
+  const tx = sqlite.transaction(() => {
+    // Replace the live order book for this server so removed/disabled offers do not linger.
+    db.delete(offers).where(eq(offers.serverId, snapshot.serverId)).run();
+    for (const offer of snapshot.offers) {
+      const row = { ...offer, importedAt: now };
+      db.insert(offers).values(row).onConflictDoUpdate({ target: offers.id, set: row }).run();
+      db.insert(priceHistory).values({
+        offerId: offer.id, serverId: offer.serverId, itemId: offer.itemId, action: offer.action,
+        currency: offer.currency, totalPrice: offer.totalPrice, quantity: offer.quantity, observedAt: offer.observedAt,
+      }).run();
+    }
+    db.update(servers).set({
+      status: 'imported_normalized', lastSyncAt: now, lastError: null,
+    }).where(eq(servers.id, snapshot.serverId)).run();
+  });
+  tx();
+  logEvent('info', 'market_sync', `GoodPrice: импортировано предложений — ${snapshot.offers.length}`, snapshot.serverId);
 }
 function getOptions(): AnalysisOptions {
   const row = db.select().from(settings).where(eq(settings.key, 'analysis')).get();
@@ -93,11 +114,53 @@ app.post('/api/servers/:id/probe', async (request, reply) => {
   const { id } = request.params as { id: string };
   const existing = db.select().from(servers).where(eq(servers.id, id)).get();
   if (!existing) return reply.code(404).send({ error: 'Сервер не найден' });
-  const result = await probeGoodPrice(existing.goodPriceUrl);
-  const nextStatus = result.reachable ? 'reachable_unverified' : 'unavailable';
-  db.update(servers).set({ status: nextStatus, lastError: result.reachable ? null : result.message }).where(eq(servers.id, id)).run();
-  logEvent(result.reachable ? 'warning' : 'error', 'source_probe', result.message, id);
-  return { ...result, tokenConfigured: !!existing.encryptedToken, tokenNote: existing.encryptedToken ? 'Токен сохранён локально, но не отправлен: схема авторизации источника не подтверждена.' : undefined };
+  const token = existing.encryptedToken ? decryptSecret(existing.encryptedToken) : undefined;
+  const result = await probeGoodPrice(existing.goodPriceUrl, token);
+  const authError = result.statusCode === 401 || result.statusCode === 403;
+  const nextStatus = result.verified ? 'api_verified'
+    : authError ? (token ? 'auth_failed' : 'auth_required')
+    : result.reachable ? 'reachable_unverified' : 'unavailable';
+  db.update(servers).set({
+    status: nextStatus, lastError: result.verified ? null : result.message,
+  }).where(eq(servers.id, id)).run();
+  logEvent(result.verified ? 'info' : result.reachable ? 'warning' : 'error', 'source_probe', result.message, id);
+  return { ...result, tokenConfigured: !!existing.encryptedToken };
+});
+
+app.post('/api/servers/:id/token', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const existing = db.select().from(servers).where(eq(servers.id, id)).get();
+  if (!existing) return reply.code(404).send({ error: 'Сервер не найден' });
+  const parsed = z.object({ token: z.string().trim().min(16).max(10000) }).safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: 'Вставьте полный world ticket из GoodPrice.' });
+  const encryptedToken = encryptSecret(parsed.data.token);
+  if (!encryptedToken) return reply.code(500).send({ error: 'Не удалось создать локальный ключ для шифрования токена. Проверьте доступ к папке data.' });
+  db.update(servers).set({ encryptedToken, status: 'not_checked', lastError: null }).where(eq(servers.id, id)).run();
+  logEvent('info', 'token_updated', 'Токен GoodPrice сохранён локально', id);
+  return { ok: true, tokenConfigured: true };
+});
+
+app.post('/api/servers/:id/sync', async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const existing = db.select().from(servers).where(eq(servers.id, id)).get();
+  if (!existing) return reply.code(404).send({ error: 'Сервер не найден' });
+  if (!existing.encryptedToken) return reply.code(400).send({
+    error: 'Для загрузки рынка нужен world ticket GoodPrice. Сохраните токен в карточке сервера.',
+  });
+  try {
+    const token = decryptSecret(existing.encryptedToken);
+    const snapshot = await fetchGoodPriceSnapshot(existing.goodPriceUrl, token, id);
+    persistSnapshot(snapshot);
+    return { ok: true, imported: snapshot.offers.length, capturedAt: snapshot.capturedAt };
+  } catch (error) {
+    const detail = safeError(error);
+    const statusCode = typeof error === 'object' && error && 'statusCode' in error
+      ? Number((error as { statusCode?: unknown }).statusCode) : undefined;
+    const nextStatus = statusCode === 401 || statusCode === 403 ? 'auth_failed' : 'sync_error';
+    db.update(servers).set({ status: nextStatus, lastError: detail }).where(eq(servers.id, id)).run();
+    logEvent('error', 'market_sync_failed', detail, id);
+    return reply.code(statusCode === 401 || statusCode === 403 ? 401 : 502).send({ error: detail });
+  }
 });
 
 app.get('/api/market/offers', async () => db.select().from(offers).orderBy(desc(offers.observedAt)).all());
@@ -109,20 +172,7 @@ app.post('/api/market/import', async (request, reply) => {
   const server = db.select().from(servers).where(eq(servers.id, snapshot.serverId)).get();
   if (!server) return reply.code(400).send({ error: 'Сначала добавьте сервер с таким serverId.' });
   if (snapshot.offers.some((offer) => offer.serverId !== snapshot.serverId)) return reply.code(400).send({ error: 'Все предложения снимка должны относиться к его serverId.' });
-  const now = new Date().toISOString();
-  const tx = sqlite.transaction(() => {
-    for (const offer of snapshot.offers) {
-      const row = { ...offer, importedAt: now };
-      db.insert(offers).values(row).onConflictDoUpdate({ target: offers.id, set: row }).run();
-      db.insert(priceHistory).values({
-        offerId: offer.id, serverId: offer.serverId, itemId: offer.itemId, action: offer.action,
-        currency: offer.currency, totalPrice: offer.totalPrice, quantity: offer.quantity, observedAt: offer.observedAt,
-      }).run();
-    }
-    db.update(servers).set({ status: 'imported_normalized', lastSyncAt: now, lastError: null }).where(eq(servers.id, snapshot.serverId)).run();
-  });
-  tx();
-  logEvent('info', 'market_import', `Импортировано предложений: ${snapshot.offers.length}`, snapshot.serverId);
+  persistSnapshot(snapshot);
   return { ok: true, imported: snapshot.offers.length, capturedAt: snapshot.capturedAt };
 });
 
