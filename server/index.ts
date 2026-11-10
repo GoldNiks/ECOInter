@@ -342,5 +342,5 @@ await app.listen({ host, port });
 app.log.info(`ECOInter API listening on http://${host}:${port}`);
 if (!canEncryptSecrets()) app.log.warn('Local token encryption is unavailable; GoodPrice token persistence is disabled.');
 const syncScheduler = setInterval(() => { void syncDueServers(); }, 15_000);
-cconst_scheduler.unref();
+syncScheduler.unref();
 void syncDueServers();
