@@ -12,8 +12,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers,
   });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  const raw = await response.text();
+  let body: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    if (parsed && typeof parsed === 'object') body = parsed as Record<string, unknown>;
+  } catch {
+    // Vite proxy and startup failures may return plain text or HTML, not JSON.
+  }
+  if (!response.ok) {
+    const detail = typeof body.error === 'string' ? body.error
+      : raw.trim() && !raw.trimStart().startsWith('<') ? raw.trim().slice(0, 500)
+      : `HTTP ${response.status}`;
+    throw new Error(detail);
+  }
   return body as T;
 }
 export const api = {
