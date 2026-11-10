@@ -123,3 +123,20 @@ test('keeps deterministic offer IDs across repeated snapshots', () => {
   const second = normalizeGoodPriceStores(input, 'server-1', '2026-11-11T12:05:00.000Z');
   assert.equal(first.offers[0].id, second.offers[0].id);
 });
+
+
+test('store location IDs remain stable when GoodPrice changes store ordering', () => {
+  const stores = [
+    { Name: 'North Market', Owner: 'Alice', Balance: 100, CurrencyName: 'Credits', Enabled: true,
+      AllOffers: [{ ItemName: 'Stone', Buying: false, Price: 1, Quantity: 1 }] },
+    { Name: 'South Market', Owner: 'Bob', Balance: 100, CurrencyName: 'Credits', Enabled: true,
+      AllOffers: [{ ItemName: 'Wood', Buying: false, Price: 1, Quantity: 1 }] },
+  ];
+  const first = normalizeGoodPriceStores({ Stores: stores }, 'server-1');
+  const reordered = normalizeGoodPriceStores({ Stores: [...stores].reverse() }, 'server-1');
+  const firstIds = new Map(first.offers.map((offer) => [offer.storeName, offer.storeId]));
+  const reorderedIds = new Map(reordered.offers.map((offer) => [offer.storeName, offer.storeId]));
+  assert.deepEqual([...reorderedIds], [...firstIds].reverse());
+  assert.equal(reorderedIds.get('North Market'), firstIds.get('North Market'));
+  assert.equal(reorderedIds.get('South Market'), firstIds.get('South Market'));
+});
