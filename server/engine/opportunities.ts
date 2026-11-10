@@ -15,6 +15,9 @@ function fresh(offer: MarketOffer, maxAgeSeconds: number, now: number): boolean 
   return Number.isFinite(stamp) && stamp <= now && now - stamp <= maxAgeSeconds * 1000;
 }
 function validOffer(offer: MarketOffer): boolean {
+  // A listed price is not an executable trade when the destination store rejects
+  // the item or its professional-storage compatibility has not been confirmed.
+  if (offer.tradeAllowed === false) return false;
   try {
     return Number.isSafeInteger(offer.quantity) && offer.quantity > 0 && money(offer.totalPrice) > ZERO && !!offer.currency;
   } catch { return false; }
