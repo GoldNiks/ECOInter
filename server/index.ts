@@ -11,7 +11,7 @@ import { analyzeMarket, DEFAULT_ANALYSIS_OPTIONS, findMultiStepRoutes } from './
 import { canEncryptSecrets, decryptSecret, encryptSecret } from './services/crypto.ts';
 import { money, moneyString } from './domain/money.ts';
 import { fetchGoodPriceSnapshot, parseNormalizedSnapshot, probeGoodPrice } from './services/goodprice.ts';
-import type { AnalysisOptions, MarketOffer, MarketSnapshot } from '../shared/types.ts';
+import type { AnalysisOptions, MarketOffer, MarketSnapshot, RestrictedOfferSummary } from '../shared/types.ts';
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info', redact: ['req.headers.authorization', 'req.headers.x-api-key', 'req.headers.x-auth-token'] } });
 await app.register(cors, { origin: ['http://127.0.0.1:5173', 'http://localhost:5173'] });
@@ -39,6 +39,28 @@ function logEvent(level: string, type: string, message: string, serverId?: strin
   db.insert(events).values({ level, type, message, serverId: serverId ?? null, createdAt: new Date().toISOString() }).run();
 }
 
+function summarizeRestrictedOffers(marketOffers: MarketOffer[]): RestrictedOfferSummary[] {
+  const grouped = new Map<string, { count: number; items: Set<string>; reason: string }>();
+  for (const offer of marketOffers) {
+    if (offer.tradeAllowed !== false) continue;
+    const storeName = offer.storeName?.trim() || 'Специализированный магазин';
+    const entry = grouped.get(storeName) ?? {
+      count: 0, items: new Set<string>(),
+      reason: offer.tradeRestriction || 'Совместимость товара с хранилищем магазина не подтверждена.',
+    };
+    entry.count++;
+    entry.items.add(offer.itemName);
+    grouped.set(storeName, entry);
+  }
+  return [...grouped.entries()].map(([storeName, entry]) => ({
+    storeName, count: entry.count, sampleItems: [...entry.items].slice(0, 5), reason: entry.reason,
+  })).sort((a, b) => b.count - a.count);
+}
+
+function restrictedOfferCount(restrictions: RestrictedOfferSummary[]): number {
+  return restrictions.reduce((total, restriction) => total + restriction.count, 0);
+}
+
 function persistSnapshot(snapshot: MarketSnapshot) {
   const now = new Date().toISOString();
   const tx = sqlite.transaction(() => {
@@ -57,7 +79,10 @@ function persistSnapshot(snapshot: MarketSnapshot) {
     }).where(eq(servers.id, snapshot.serverId)).run();
   });
   tx();
-  logEvent('info', 'market_sync', `GoodPrice: импортировано предложений — ${snapshot.offers.length}`, snapshot.serverId);
+  const restrictedCount = snapshot.offers.filter((offer) => offer.tradeAllowed === false).length;
+  logEvent('info', 'market_sync',
+    `GoodPrice: импортировано предложений — ${snapshot.offers.length}; исключено из исполнимых расчётов из-за ограничений хранилищ — ${restrictedCount}`,
+    snapshot.serverId);
 }
 
 const syncInProgress = new Set<string>();
@@ -93,7 +118,7 @@ async function syncGoodPriceServer(serverId: string): Promise<MarketSnapshot> {
   }
 }
 
-async function syncDueServers() {
+async function syncDueServers(force = false) {
   const now = Date.now();
   const configured = db.select().from(servers).all();
   for (const server of configured) {
@@ -101,7 +126,7 @@ async function syncDueServers() {
     if (now < (syncRetryAfter.get(server.id) ?? 0)) continue;
     const lastSync = server.lastSyncAt ? Date.parse(server.lastSyncAt) : 0;
     const intervalMs = Math.max(30, server.refreshSeconds) * 1000;
-    if (lastSync && now - lastSync < intervalMs) continue;
+    if (!force && lastSync && now - lastSync < intervalMs) continue;
     try { await syncGoodPriceServer(server.id); } catch { /* the failure is stored in the local journal */ }
   }
 }
@@ -242,15 +267,22 @@ app.post('/api/routes/search', async (request, reply) => {
   const marketOffers = db.select().from(offers).all() as MarketOffer[];
   const options = { ...getOptions(), startingCapitalByCurrency: { [parsed.data.currency]: parsed.data.capital } };
   const routes = findMultiStepRoutes(marketOffers, options);
-  return { routes, count: routes.length, analyzedOffers: marketOffers.length };
+  const restrictions = summarizeRestrictedOffers(marketOffers);
+  return {
+    routes, count: routes.length, analyzedOffers: marketOffers.length,
+    excludedOffers: restrictedOfferCount(restrictions), restrictions,
+  };
 });
 
 app.get('/api/opportunities', async (request) => {
   const query = request.query as { kind?: string };
   const marketOffers = db.select().from(offers).all() as MarketOffer[];
   const results = analyzeMarket(marketOffers, getOptions());
-  if (!query.kind || query.kind === 'all') return { opportunities: results, count: results.length, analyzedOffers: marketOffers.length };
-  return { opportunities: results.filter((x) => x.kind === query.kind), count: results.filter((x) => x.kind === query.kind).length, analyzedOffers: marketOffers.length };
+  const restrictions = summarizeRestrictedOffers(marketOffers);
+  const summary = { analyzedOffers: marketOffers.length, excludedOffers: restrictedOfferCount(restrictions), restrictions };
+  if (!query.kind || query.kind === 'all') return { opportunities: results, count: results.length, ...summary };
+  const filtered = results.filter((x) => x.kind === query.kind);
+  return { opportunities: filtered, count: filtered.length, ...summary };
 });
 
 app.post('/api/settings/analysis', async (request, reply) => {
@@ -363,7 +395,7 @@ export async function startServer() {
   if (!canEncryptSecrets()) app.log.warn('Local token encryption is unavailable; GoodPrice token persistence is disabled.');
   const syncScheduler = setInterval(() => { void syncDueServers(); }, 15_000);
   syncScheduler.unref();
-  void syncDueServers();
+  void syncDueServers(true);
 }
 
 // Importing the API in tests must not bind a port or start background sync jobs.
