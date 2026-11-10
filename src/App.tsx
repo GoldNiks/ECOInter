@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowLeftRight, ArrowUpRight, Boxes, ChartNoAxesCombined,
-  ChevronDown, CircleDollarSign, Clock3, Compass, Database, FileClock, Gauge, LayoutDashboard,
+  Activity, AlertTriangle, ArrowDownRight, ArrowLeftRight, ArrowUpRight, Boxes, BarChart3,
+  ChevronDown, CircleDollarSign, Clock3, Compass, Database, History, Gauge, LayoutDashboard,
   ListFilter, LoaderCircle, Plus, RefreshCw, Route, Search, Settings2, ShieldCheck, ShoppingBag,
   Server, SlidersHorizontal, Trash2, TrendingUp, X,
 } from 'lucide-react';
@@ -11,13 +11,13 @@ import type { AnalysisOptions, Opportunity, ServerRecord } from '../shared/types
 type Page = 'overview' | 'opportunities' | 'routes' | 'products' | 'history' | 'simulation' | 'servers' | 'journal' | 'settings';
 const NAV: Array<{ id: Page; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'overview', label: 'Обзор', icon: LayoutDashboard },
-  { id: 'opportunities', label: 'Возможности', icon: ChartNoAxesCombined },
+  { id: 'opportunities', label: 'Возможности', icon: BarChart3 },
   { id: 'routes', label: 'Конструктор маршрутов', icon: Route },
   { id: 'products', label: 'Товары', icon: Boxes },
   { id: 'history', label: 'История цен', icon: TrendingUp },
   { id: 'simulation', label: 'Симуляция', icon: Activity },
   { id: 'servers', label: 'Серверы', icon: Server },
-  { id: 'journal', label: 'Журнал', icon: FileClock },
+  { id: 'journal', label: 'Журнал', icon: History },
   { id: 'settings', label: 'Настройки', icon: Settings2 },
 ];
 const fmt = (value: string | number, digits = 2) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(Number(value));
@@ -96,7 +96,7 @@ function Dashboard({ dashboard, opportunities, servers, loading, setPage }: { da
     </div>
     <div className="section-row"><div><div className="eyebrow">OPPORTUNITY ENGINE</div><h2>Лучшие возможности</h2></div><button className="text-button" onClick={() => setPage('opportunities')}>Все возможности <ArrowUpRight size={15} /></button></div>
     <div className="panel opportunity-panel">
-      {loading ? <Loading /> : best.length ? <OpportunityTable items={best} compact /> : <EmptyState icon={ChartNoAxesCombined} title="Пока нет подтверждённых возможностей" text="Добавьте сервер и импортируйте реальные предложения. Аналитика не показывает тестовые или выдуманные цены." action={<button className="button primary" onClick={() => setPage('servers')}>Настроить источник</button>} />}
+      {loading ? <Loading /> : best.length ? <OpportunityTable items={best} compact /> : <EmptyState icon={BarChart3} title="Пока нет подтверждённых возможностей" text="Добавьте сервер и импортируйте реальные предложения. Аналитика не показывает тестовые или выдуманные цены." action={<button className="button primary" onClick={() => setPage('servers')}>Настроить источник</button>} />}
     </div>
     <div className="lower-grid">
       <div className="panel panel-pad"><div className="panel-title"><div><h3>Состояние источников</h3><p>Подключённые игровые рынки</p></div><button className="icon-button" onClick={() => setPage('servers')}><ArrowUpRight size={16} /></button></div>
@@ -196,7 +196,7 @@ function ServersPage({ servers, onChange, notify }: { servers: ServerRecord[]; o
       <div className="server-cards"><div className="panel panel-pad import-panel"><div className="panel-title"><div><h3>Импорт рыночного снимка</h3><p>Файл JSON по внутреннему контракту ECOInter</p></div><Database size={17} className="muted-icon" /></div><input className="field file-field" type="file" accept=".json,application/json" disabled={busy === 'import'} onChange={(e) => void importFile(e.target.files?.[0])} /><small className="muted-text">Это не формат GoodPrice. Используйте только после получения и нормализации реальных предложений.</small></div>{servers.length ? servers.map((s) => <div className="panel server-card" key={s.id}><div className="server-card-top"><div><span className={`status-dot ${s.status === 'imported_normalized' ? 'online' : 'warning'}`} /><h3>{s.name}</h3></div><button className="icon-button danger-hover" onClick={() => void remove(s.id)} title="Удалить"><Trash2 size={15} /></button></div><p className="server-url">{s.goodPriceUrl}</p><div className="server-meta"><span>{statusLabel(s.status)}</span><span>Интервал: {s.refreshSeconds} сек.</span><span>{s.tokenConfigured ? 'Токен сохранён' : 'Без токена'}</span></div>{probe[s.id] && <div className="probe-result">{probe[s.id]}</div>}<div className="server-actions"><button className="button secondary small" disabled={busy === s.id} onClick={() => void check(s.id)}><RefreshCw size={14} className={busy === s.id ? 'spin' : ''} /> Проверить источник</button><span className="muted-text">Последняя синхронизация: {time(s.lastSyncAt)}</span></div></div>) : <div className="panel"><EmptyState icon={Server} title="Серверы не добавлены" text="Добавьте первый игровой сервер, чтобы настроить независимый источник данных." /></div>}</div></div>
   </>;
 }
-function JournalPage({ events }: { events: Awaited<ReturnType<typeof api.events>> }) { return <><PageHeading eyebrow="EVENT LOG" title="Журнал событий" text="Подключения, импорт, ошибки источников и изменения настроек." /><div className="panel">{events.length ? <div className="event-list">{events.map((e) => <div className="event-row" key={e.id}><span className={`event-level ${e.level}`}>{e.level.toUpperCase()}</span><div><strong>{e.message}</strong><small>{e.type} · {e.serverId ?? 'система'}</small></div><time>{time(e.createdAt)}</time></div>)}</div> : <EmptyState icon={FileClock} title="Журнал пуст" text="События появятся после добавления серверов, проверки источников и импорта данных." />}</div></>; }
+function JournalPage({ events }: { events: Awaited<ReturnType<typeof api.events>> }) { return <><PageHeading eyebrow="EVENT LOG" title="Журнал событий" text="Подключения, импорт, ошибки источников и изменения настроек." /><div className="panel">{events.length ? <div className="event-list">{events.map((e) => <div className="event-row" key={e.id}><span className={`event-level ${e.level}`}>{e.level.toUpperCase()}</span><div><strong>{e.message}</strong><small>{e.type} · {e.serverId ?? 'система'}</small></div><time>{time(e.createdAt)}</time></div>)}</div> : <EmptyState icon={History} title="Журнал пуст" text="События появятся после добавления серверов, проверки источников и импорта данных." />}</div></>; }
 function SettingsPage({ notify }: { notify: (s: string) => void }) {
   const [settings, setSettings] = useState<AnalysisOptions | null>(null);
   const [saving, setSaving] = useState(false);
