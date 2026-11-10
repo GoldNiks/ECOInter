@@ -60,3 +60,28 @@
   .opportunity-detail { width: 100%; max-height: calc(100dvh - 20px); padding: 16px; }
   .opportunity-detail-overlay .opportunity-detail .panel-title { top: -16px; }
 }
+
+
+/* Store-level logistics and compatibility controls. */
+.store-logistics-panel { margin-top: 14px; }
+.store-config-list { display: grid; gap: 10px; margin: 16px 0; }
+.store-config-row { padding: 14px; border: 1px solid #263647; border-radius: 9px; background: #101a26; }
+.store-config-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.store-config-heading strong { display: block; color: #dce5ef; font-size: 11px; }
+.store-config-heading small { display: block; color: #78899e; font-size: 9px; margin-top: 4px; }
+.store-coordinate-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; max-width: 460px; }
+.store-coordinate-fields label span { display: block; margin-bottom: 6px; font-size: 9px; color: #8192a7; }
+.store-accepted-items { display: grid; gap: 7px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #243142; }
+.store-accepted-items > b { color: #d6e0eb; font-size: 10px; }
+.store-accepted-items > small { color: #8292a5; font-size: 9px; line-height: 1.5; }
+.store-accepted-items > div { display: flex; flex-wrap: wrap; gap: 7px 14px; }
+.store-accepted-items label { display: inline-flex; align-items: center; gap: 6px; color: #b8c6d6; font-size: 10px; }
+.store-accepted-items input { accent-color: #35b981; }
+.route-summary { grid-template-columns: repeat(5,minmax(0,1fr)); }
+@media(max-width:850px) {
+  .route-summary { grid-template-columns: repeat(3,minmax(0,1fr)); }
+}
+@media(max-width:650px) {
+  .store-coordinate-fields { grid-template-columns: 1fr 1fr; }
+  .route-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
