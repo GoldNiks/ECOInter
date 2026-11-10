@@ -7,7 +7,7 @@ import { desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, sqlite } from './db.ts';
 import { events, offers, priceHistory, servers, settings, simulations } from './schema.ts';
-import { analyzeMarket, DEFAULT_ANALYSIS_OPTIONS, findMultiStepRoutes } from './engine/opportunities.ts';
+import { analyzeMarket, DEFAULT_ANALYSIS_OPTIONS, findMultiStepRoutes, findMultiStepRoutesDetailed } from './engine/opportunities.ts';
 import { canEncryptSecrets, decryptSecret, encryptSecret } from './services/crypto.ts';
 import { money, moneyString } from './domain/money.ts';
 import { fetchGoodPriceSnapshot, parseNormalizedSnapshot, probeGoodPrice } from './services/goodprice.ts';
@@ -29,7 +29,7 @@ const analysisOptionsSchema = z.object({
   maxIntermediateCurrencies: z.number().int().min(1).max(12).default(4), maxResults: z.number().int().min(1).max(1000).default(100),
   maxCombinations: z.number().int().min(100).max(1_000_000).default(25000), maxDurationMs: z.number().int().min(100).max(30000).default(2000),
   minProfit: nonNegativeMoney.default('0'), minRoiPercent: nonNegativeMoney.default('0'), maxQuoteAgeSeconds: z.number().int().min(1).max(604800).default(900),
-  startingCapitalByCurrency: z.record(z.string(), nonNegativeMoney).optional(), maxStartingCapital: nonNegativeMoney.optional(),
+  startingCapitalByCurrency: z.record(z.string(), nonNegativeMoney).optional(),
   feesByServer: z.record(z.string(), z.object({
     buyPercent: nonNegativeMoney, sellPercent: nonNegativeMoney, taxPercent: nonNegativeMoney, buyFixed: nonNegativeMoney, sellFixed: nonNegativeMoney,
   })).optional(),
@@ -266,11 +266,11 @@ app.post('/api/routes/search', async (request, reply) => {
   if (!parsed.success) return reply.code(400).send({ error: 'Укажите валюту и корректный стартовый капитал.' });
   const marketOffers = db.select().from(offers).all() as MarketOffer[];
   const options = { ...getOptions(), startingCapitalByCurrency: { [parsed.data.currency]: parsed.data.capital } };
-  const routes = findMultiStepRoutes(marketOffers, options);
+  const search = findMultiStepRoutesDetailed(marketOffers, options);
   const restrictions = summarizeRestrictedOffers(marketOffers);
   return {
-    routes, count: routes.length, analyzedOffers: marketOffers.length,
-    excludedOffers: restrictedOfferCount(restrictions), restrictions,
+    routes: search.routes, count: search.routes.length, analyzedOffers: marketOffers.length,
+    excludedOffers: restrictedOfferCount(restrictions), restrictions, searchStats: search.stats,
   };
 });
 
