@@ -36,11 +36,21 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     setLoading(true); setError('');
-    try {
-      const [d, s, o, p, e] = await Promise.all([api.dashboard(), api.servers(), api.opportunities(), api.products(), api.events()]);
-      setDashboard(d); setServers(s); setOpportunities(o.opportunities); setProducts(p); setEvents(e);
-    } catch (err) { setError(err instanceof Error ? err.message : 'Не удалось загрузить данные API'); }
-    finally { setLoading(false); }
+    const [d, s, o, p, e] = await Promise.all([
+      api.dashboard().then((data) => ({ ok: true as const, data })).catch((error) => ({ ok: false as const, error })),
+      api.servers().then((data) => ({ ok: true as const, data })).catch((error) => ({ ok: false as const, error })),
+      api.opportunities().then((data) => ({ ok: true as const, data })).catch((error) => ({ ok: false as const, error })),
+      api.products().then((data) => ({ ok: true as const, data })).catch((error) => ({ ok: false as const, error })),
+      api.events().then((data) => ({ ok: true as const, data })).catch((error) => ({ ok: false as const, error })),
+    ]);
+    const failures: string[] = [];
+    if (d.ok) setDashboard(d.data); else failures.push(d.error instanceof Error ? d.error.message : '/api/dashboard: ошибка');
+    if (s.ok) setServers(s.data); else failures.push(s.error instanceof Error ? s.error.message : '/api/servers: ошибка');
+    if (o.ok) setOpportunities(o.data.opportunities); else failures.push(o.error instanceof Error ? o.error.message : '/api/opportunities: ошибка');
+    if (p.ok) setProducts(p.data); else failures.push(p.error instanceof Error ? p.error.message : '/api/products: ошибка');
+    if (e.ok) setEvents(e.data); else failures.push(e.error instanceof Error ? e.error.message : '/api/events: ошибка');
+    setError(failures.length ? `Не удалось загрузить часть данных: ${failures.join(' · ')}` : '');
+    setLoading(false);
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
 
