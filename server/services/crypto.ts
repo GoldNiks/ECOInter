@@ -7,7 +7,7 @@ function keyFromEnvironment(): Buffer | null {
   if (secret) return scryptSync(secret, 'ecointer-local-secret-v1', 32);
 
   // First-run convenience: generate a private local key automatically.
-  // The key is stored next to the local SQLite database, never in source control.
+  // The key is stored in the local data directory, never in source control.
   const keyPath = process.env.ECOINTER_KEY_FILE ?? './data/master.key';
   try {
     fs.mkdirSync(path.dirname(path.resolve(keyPath)), { recursive: true });
