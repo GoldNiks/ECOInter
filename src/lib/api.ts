@@ -24,7 +24,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const detail = typeof body.error === 'string' ? body.error
       : raw.trim() && !raw.trimStart().startsWith('<') ? raw.trim().slice(0, 500)
       : `HTTP ${response.status}`;
-    throw new Error(detail);
+    throw new Error(`${path}: ${detail}`);
   }
   return body as T;
 }
