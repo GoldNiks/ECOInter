@@ -28,7 +28,7 @@ const analysisOptionsSchema = z.object({
   maxOperations: z.number().int().min(2).max(12).default(6), maxUniqueItems: z.number().int().min(1).max(20).default(6),
   maxIntermediateCurrencies: z.number().int().min(1).max(12).default(4), maxResults: z.number().int().min(1).max(1000).default(100),
   maxCombinations: z.number().int().min(100).max(1_000_000).default(25000), maxDurationMs: z.number().int().min(100).max(30000).default(2000),
-  minProfit: nonNegativeMoney.default('0'), minRoiPercent: nonNegativeMoney.default('0'), maxQuoteAgeSeconds: z.number().int().min(1).max(604800).default(900),
+  minProfit: nonNegativeMoney.default('0'), minRoiPercent: nonNegativeMoney.default('0'), minRouteRoiPercent: nonNegativeMoney.default('5'), maxQuoteAgeSeconds: z.number().int().min(1).max(604800).default(900),
   startingCapitalByCurrency: z.record(z.string(), nonNegativeMoney).optional(),
   feesByServer: z.record(z.string(), z.object({
     buyPercent: nonNegativeMoney, sellPercent: nonNegativeMoney, taxPercent: nonNegativeMoney, buyFixed: nonNegativeMoney, sellFixed: nonNegativeMoney,
