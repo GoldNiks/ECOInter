@@ -114,7 +114,24 @@ function safeError(error: unknown): string {
   return message.replace(/(token|authorization|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]').slice(0, 600);
 }
 
-app.get('/api/health', async () => ({ ok: true, app: 'ECOInter', time: new Date().toISOString(), database: 'ready', goodPrice: 'not_verified' }));
+app.get('/api/health', async (_request, reply) => {
+  try {
+    // Exercise every local table used by the UI, not just the SQLite connection.
+    db.select().from(servers).limit(1).all();
+    db.select().from(offers).limit(1).all();
+    db.select().from(priceHistory).limit(1).all();
+    db.select().from(events).limit(1).all();
+    db.select().from(settings).limit(1).all();
+    db.select().from(simulations).limit(1).all();
+    return { ok: true, app: 'ECOInter', time: new Date().toISOString(), database: 'ready', goodPrice: 'not_verified' };
+  } catch (error) {
+    reply.code(503);
+    return {
+      ok: false, app: 'ECOInter', time: new Date().toISOString(),
+      database: 'error', error: safeError(error), goodPrice: 'not_verified',
+    };
+  }
+});
 
 app.get('/api/servers', async () => {
   const rows = db.select().from(servers).orderBy(desc(servers.priority)).all();
@@ -333,7 +350,7 @@ app.setErrorHandler((error, request, reply) => {
     app.log.error({ err: safeError(loggingError) }, 'Could not persist API error to the local journal');
   }
 
-  reply.code(500).send({ error: 'Внутренняя ошибка. Подробности записаны в локальный журнал без секретов.' });
+  reply.code(500).send({ error: `Ошибка ${request.method} ${route}: ${detail}` });
 });
 
 const host = process.env.HOST ?? '127.0.0.1';
