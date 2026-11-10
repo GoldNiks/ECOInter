@@ -575,5 +575,5 @@ export function analyzeMarket(offers: MarketOffer[], options: AnalysisOptions, n
 
 export const DEFAULT_ANALYSIS_OPTIONS: AnalysisOptions = {
   maxOperations: 8, maxUniqueItems: 8, maxIntermediateCurrencies: 6,
-  maxResults: 250, maxCombinations: 250000, maxDurationMs: 8000, minProfit: '0', minRoiPercent: '0', minRouteRoiPercent: '5', maxQuoteAgeSeconds: 900,
+  maxResults: 250, maxCombinations: 250000, maxDurationMs: 8000, minProfit: '0', minRoiPercent: '0', minRouteRoiPercent: '0', maxQuoteAgeSeconds: 900,
 };
