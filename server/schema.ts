@@ -13,6 +13,9 @@ export const offers = sqliteTable('offers', {
   itemName: text('item_name').notNull(), action: text('action').notNull(), currency: text('currency').notNull(),
   totalPrice: text('total_price').notNull(), quantity: integer('quantity').notNull(), quoteKind: text('quote_kind').notNull(),
   observedAt: text('observed_at').notNull(), sourceId: text('source_id'), importedAt: text('imported_at').notNull(),
+  storeId: text('store_id'), storeName: text('store_name'),
+  tradeAllowed: integer('trade_allowed', { mode: 'boolean' }).notNull().default(true),
+  tradeRestriction: text('trade_restriction'),
 });
 
 export const priceHistory = sqliteTable('price_history', {
