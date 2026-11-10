@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 
 function keyFromEnvironment(): Buffer | null {
   const secret = process.env.ECOINTER_MASTER_KEY?.trim();
