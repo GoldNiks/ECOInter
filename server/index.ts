@@ -133,7 +133,7 @@ app.post('/api/servers', async (request, reply) => {
   let encryptedToken: string | null = null;
   if (input.token) {
     encryptedToken = encryptSecret(input.token);
-    if (!encryptedToken) return reply.code(400).send({ error: 'Токен не сохранён: сначала задайте ECOINTER_MASTER_KEY в .env и перезапустите приложение.' });
+    if (!encryptedToken) return reply.code(500).send({ error: 'Не удалось создать локальный ключ шифрования. Проверьте доступ к папке data.' });
   }
   const id = randomUUID();
   const now = new Date().toISOString();
