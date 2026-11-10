@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS servers (
 CREATE TABLE IF NOT EXISTS offers (
  id TEXT PRIMARY KEY, server_id TEXT NOT NULL, item_id TEXT NOT NULL, item_name TEXT NOT NULL,
  action TEXT NOT NULL, currency TEXT NOT NULL, total_price TEXT NOT NULL, quantity INTEGER NOT NULL,
- quote_kind TEXT NOT NULL, observed_at TEXT NOT NULL, source_id TEXT, imported_at TEXT NOT NULL
+ quote_kind TEXT NOT NULL, observed_at TEXT NOT NULL, source_id TEXT, imported_at TEXT NOT NULL,
+ store_id TEXT, store_name TEXT, trade_allowed INTEGER NOT NULL DEFAULT 1, trade_restriction TEXT
 );
 CREATE INDEX IF NOT EXISTS offers_lookup_idx ON offers(server_id, item_id, currency, action);
 CREATE INDEX IF NOT EXISTS offers_observed_idx ON offers(observed_at);
@@ -39,4 +40,13 @@ CREATE TABLE IF NOT EXISTS simulations (
 );
 CREATE INDEX IF NOT EXISTS simulations_created_idx ON simulations(created_at);
 `);
+
+// Upgrade existing local databases in place. Previously imported offers remain valid by
+// default until the next GoodPrice sync replaces them with store-aware snapshots.
+const offerColumns = new Set((sqlite.pragma('table_info(offers)') as Array<{ name: string }>).map((column) => column.name));
+if (!offerColumns.has('store_id')) sqlite.exec('ALTER TABLE offers ADD COLUMN store_id TEXT');
+if (!offerColumns.has('store_name')) sqlite.exec('ALTER TABLE offers ADD COLUMN store_name TEXT');
+if (!offerColumns.has('trade_allowed')) sqlite.exec('ALTER TABLE offers ADD COLUMN trade_allowed INTEGER NOT NULL DEFAULT 1');
+if (!offerColumns.has('trade_restriction')) sqlite.exec('ALTER TABLE offers ADD COLUMN trade_restriction TEXT');
+
 export const db = drizzle(sqlite, { schema });
