@@ -279,7 +279,7 @@ export function findMultiStepRoutesDetailed(
           const required = add(money(edge.buy.totalPrice), add(percentOfSafe(money(edge.buy.totalPrice), money(feePolicy(options, edge.serverId).buyPercent)), money(feePolicy(options, edge.serverId).buyFixed)));
           return required > max ? required : max;
         }, ZERO);
-    if (initial <= ZERO || (options.maxStartingCapital && initial > money(options.maxStartingCapital))) continue;
+    if (initial <= ZERO) continue;
 
     const walk = (currency: string, balance: bigint, legs: RouteLeg[], usedItems: Set<string>, seenCurrencies: Set<string>) => {
       if (stopped || legs.length >= maxLegs) return;
