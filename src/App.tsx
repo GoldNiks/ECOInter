@@ -34,6 +34,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [simulationOpportunityId, setSimulationOpportunityId] = useState('');
 
   const refresh = useCallback(async () => {
     setLoading(true); setError('');
@@ -94,11 +95,11 @@ export default function App() {
         {notice && <div className="alert success">{notice}</div>}
         {marketRestrictions.length > 0 && <div className="alert warning"><AlertTriangle size={17} /><span>Из исполнимого анализа исключены заявки профессиональных рынков: {marketRestrictions.map((item) => `${item.storeName} — ${item.count}`).join('; ')}. Совместимость товаров с хранилищами не подтверждена.</span></div>}
         {page === 'overview' && <Dashboard dashboard={dashboard} opportunities={opportunities} servers={servers} loading={loading} setPage={setPage} />}
-        {page === 'opportunities' && <OpportunitiesPage items={opportunities} loading={loading} />}
+        {page === 'opportunities' && <OpportunitiesPage items={opportunities} loading={loading} onSimulate={(id) => { setSimulationOpportunityId(id); setPage('simulation'); }} />}
         {page === 'routes' && <RouteBuilder />}
         {page === 'products' && <ProductsPage items={products} />}
         {page === 'history' && <HistoryPage />}
-        {page === 'simulation' && <SimulationPage opportunities={activeOpps} />}
+        {page === 'simulation' && <SimulationPage opportunities={activeOpps} initialSelectedId={simulationOpportunityId} />}
         {page === 'servers' && <ServersPage servers={servers} onChange={refresh} notify={showNotice} />}
         {page === 'journal' && <JournalPage events={events} />}
         {page === 'settings' && <SettingsPage notify={showNotice} />}
@@ -140,23 +141,50 @@ function Dashboard({ dashboard, opportunities, servers, loading, setPage }: { da
 function statusLabel(status: string) { return ({ imported_normalized: 'Рынок синхронизирован', api_verified: 'API подтверждён · ожидает синхронизации', auth_required: 'Нужен world ticket', auth_failed: 'Токен отклонён или истёк', sync_error: 'Ошибка синхронизации', reachable_unverified: 'Адрес отвечает · API не проверен', unavailable: 'Недоступен', not_checked: 'Не проверен' } as Record<string, string>)[status] ?? status; }
 function Loading() { return <div className="loading"><LoaderCircle className="spin" size={20} /> Загрузка данных…</div>; }
 function EmptyState({ icon: Icon, title, text, action }: { icon: typeof Activity; title: string; text: string; action?: React.ReactNode }) { return <div className="empty-state"><div className="empty-icon"><Icon size={22} /></div><h3>{title}</h3><p>{text}</p>{action}</div>; }
-function OpportunityTable({ items, compact = false }: { items: Opportunity[]; compact?: boolean }) {
-  return <div className="table-scroll"><table><thead><tr><th>Возможность</th><th>Тип</th><th>Маршрут / сервер</th><th>Капитал</th><th>Результат</th><th>Доходность</th><th>Данные</th></tr></thead><tbody>{items.map((item) => {
+function OpportunityTable({ items, compact = false, onChoose }: { items: Opportunity[]; compact?: boolean; onChoose?: (item: Opportunity) => void }) {
+  return <div className="table-scroll"><table><thead><tr><th>Возможность</th><th>Тип</th><th>Маршрут / сервер</th><th>Капитал</th><th>Результат</th><th>Доходность</th><th>Данные</th>{onChoose && <th>Действие</th>}</tr></thead><tbody>{items.map((item) => {
     const name = item.kind === 'direct' ? item.itemName : item.kind === 'multi_step' ? item.legs.map((l) => l.itemName).join(' → ') : item.itemName;
     const profit = item.kind === 'interserver' ? item.priceGap : item.netProfit;
     const capital = item.kind === 'multi_step' ? `${item.initialCapital} ${item.startCurrency}` : item.kind === 'direct' ? `${item.buyCost} ${item.currency}` : `${item.referenceBuyCost} ${item.currency}`;
     const currency = item.kind === 'multi_step' ? item.startCurrency : item.currency;
-    const roi = item.kind === 'interserver' ? 'не исполняется' : `${fmt(item.roiPercent)}%`;
-    return <tr key={item.id}><td><strong>{name}</strong><small>{item.kind === 'multi_step' ? `${item.legs.length} товара · ${item.operations} операции` : item.kind === 'direct' ? `${item.quantity} ед.` : `${item.quantity} ед.`}</small></td><td><span className={`type-pill ${item.kind}`}>{item.kind === 'direct' ? 'Прямая' : item.kind === 'multi_step' ? 'Маршрут' : 'Разница цен'}</span></td><td>{item.kind === 'direct' ? item.serverId : item.kind === 'multi_step' ? `${item.startCurrency} → ${item.endCurrency}` : `${item.buyServerId} → ${item.sellServerId}`}</td><td className="mono">{capital}</td><td><strong className="positive mono">+{fmt(profit)} {currency}</strong></td><td className="mono">{roi}</td><td><span className="data-tag">{item.kind === 'interserver' ? 'Не исполняется' : item.quoteKind === 'listing' ? 'Предложения' : 'Оценка'}</span></td></tr>;
+    const roi = item.kind === 'interserver' ? 'справочно' : `${fmt(item.roiPercent)}%`;
+    return <tr key={item.id} className={onChoose ? 'opportunity-row' : undefined}>
+      <td><strong>{name}</strong><small>{item.kind === 'multi_step' ? `${item.legs.length} товара · ${item.operations} операции` : `${item.quantity} ед.`}</small></td>
+      <td><span className={`type-pill ${item.kind}`}>{item.kind === 'direct' ? 'Прямая' : item.kind === 'multi_step' ? 'Маршрут' : 'Разница цен'}</span></td>
+      <td>{item.kind === 'direct' ? item.serverId : item.kind === 'multi_step' ? `${item.startCurrency} → ${item.endCurrency}` : `${item.buyServerId} → ${item.sellServerId}`}</td>
+      <td className="mono">{capital}</td><td><strong className={item.kind === 'interserver' ? 'mono' : 'positive mono'}>{item.kind === 'interserver' ? '' : '+'}{fmt(profit)} {currency}</strong></td>
+      <td className="mono">{roi}</td><td><span className="data-tag">{item.kind === 'interserver' ? 'Перенос не подтверждён' : item.quoteKind === 'listing' ? 'Предложения' : 'Оценка'}</span></td>
+      {onChoose && <td><button className="text-button opportunity-open" onClick={() => onChoose(item)}>Подробнее <ArrowUpRight size={13} /></button></td>}
+    </tr>;
   })}</tbody></table></div>;
 }
-function OpportunitiesPage({ items, loading }: { items: Opportunity[]; loading: boolean }) {
+function OpportunityDetails({ item, onSimulate, onClose }: { item: Opportunity; onSimulate: (id: string) => void; onClose: () => void }) {
+  const currency = item.kind === 'multi_step' ? item.startCurrency : item.currency;
+  return <div className="panel panel-pad opportunity-detail">
+    <div className="panel-title"><div><div className="eyebrow">OPPORTUNITY DETAILS</div><h3>{item.kind === 'direct' ? item.itemName : item.kind === 'multi_step' ? item.legs.map((leg) => leg.itemName).join(' → ') : item.itemName}</h3><p>{item.kind === 'direct' ? 'Прямая покупка и перепродажа' : item.kind === 'multi_step' ? `Многоэтапный маршрут · ${item.operations} операции` : 'Справочное сравнение двух серверов'}</p></div><button className="icon-button" onClick={onClose} title="Закрыть"><X size={16} /></button></div>
+    {item.kind === 'interserver' ? <>
+      <div className="hint-block"><AlertTriangle size={16} /> Это не исполнимая сделка. Анализатор видит разницу цен между серверами, но не располагает подтверждённым способом переноса товара или валюты между ними. Поэтому добавить её в симуляцию нельзя.</div>
+      <div className="opportunity-detail-grid"><div><span>Покупка</span><b>{item.referenceBuyCost} {item.currency}</b><small>{item.buyServerId}</small></div><div><span>Продажа</span><b>{item.referenceSellRevenue} {item.currency}</b><small>{item.sellServerId}</small></div><div><span>Разница цен</span><b>{item.priceGap} {item.currency}</b></div><div><span>Количество</span><b>{item.quantity} ед.</b></div></div>
+    </> : item.kind === 'direct' ? <>
+      <div className="opportunity-detail-grid"><div><span>Количество</span><b>{item.quantity} ед.</b></div><div><span>Затраты на покупку</span><b>{item.buyCost} {currency}</b></div><div><span>Выручка</span><b>{item.sellRevenue} {currency}</b></div><div><span>Комиссии и налоги</span><b>{item.fees} {currency}</b></div><div><span>Чистая прибыль</span><b className="positive">+{item.netProfit} {currency}</b></div><div><span>Доходность</span><b>{fmt(item.roiPercent)}%</b></div><div><span>Сервер</span><b>{item.serverId}</b></div><div><span>Котировка</span><b>{item.quoteKind === 'listing' ? 'Рыночные заявки' : 'Справочная оценка'}</b></div></div>
+      <div className="detail-note">Покупка и перепродажа собраны из {item.buyOfferIds.length} заявок на покупку и {item.sellOfferIds.length} заявок на приём.</div>
+    </> : <>
+      <div className="opportunity-detail-grid"><div><span>Стартовый капитал</span><b>{item.initialCapital} {currency}</b></div><div><span>Конечный капитал</span><b className="positive">{item.finalCapital} {currency}</b></div><div><span>Чистая прибыль</span><b className="positive">+{item.netProfit} {currency}</b></div><div><span>Доходность</span><b>{fmt(item.roiPercent)}%</b></div><div><span>Сервер</span><b>{item.serverId}</b></div><div><span>Источник</span><b>{item.quoteKind === 'listing' ? 'Рыночные заявки' : 'Справочная оценка'}</b></div></div>
+      <div className="route-step-list">{item.legs.map((leg,index)=><div className="route-step" key={`${leg.buyOfferId}-${leg.sellOfferId}-${index}`}><div className="step-number">{index+1}</div><div className="step-content"><strong>{leg.itemName}</strong><small>Купить {leg.quantity} ед. за {leg.buyCost} {leg.fromCurrency}</small><small>Продать за {leg.sellRevenue} {leg.toCurrency}</small>{(leg.buyOfferIds.length>1||leg.sellOfferIds.length>1)&&<small>Объединено заявок: покупка {leg.buyOfferIds.length}, приём {leg.sellOfferIds.length}</small>}</div><div className="step-balance"><span>Баланс после этапа</span><b>{leg.outputBalance} {leg.toCurrency}</b></div></div>)}</div>
+    </>}
+    {item.kind !== 'interserver' && <div className="opportunity-detail-actions"><button className="button primary" onClick={() => onSimulate(item.id)}><Activity size={14} /> Выбрать для симуляции</button><span className="muted-text">Создаётся виртуальный сценарий. Игровые ордера не отправляются.</span></div>}
+  </div>;
+}
+function OpportunitiesPage({ items, loading, onSimulate }: { items: Opportunity[]; loading: boolean; onSimulate: (id: string) => void }) {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [selectedId, setSelectedId] = useState('');
   const filtered = items.filter((o) => (filter === 'all' || o.kind === filter) && JSON.stringify(o).toLowerCase().includes(search.toLowerCase()));
-  return <><PageHeading eyebrow="LIVE SCANNER" title="Торговые возможности" text="Независимые результаты прямого анализа, маршрутов и межсерверного сравнения." action={<div className="search-box"><Search size={15} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по товару…" /></div>} />
-    <div className="toolbar"><div className="segmented">{[['all', 'Все'], ['direct', 'Прямые сделки'], ['multi_step', 'Маршруты'], ['interserver', 'Разница серверов']].map(([key, label]) => <button key={key} className={filter === key ? 'selected' : ''} onClick={() => setFilter(key)}>{label}</button>)}</div><div className="toolbar-meta"><ListFilter size={14} /> {filtered.length} результатов</div></div>
-    <div className="panel">{loading ? <Loading /> : filtered.length ? <OpportunityTable items={filtered} /> : <EmptyState icon={Search} title="Ничего не найдено" text="Проверьте фильтр или импортируйте рыночные предложения. Межсерверные разницы не считаются исполнимыми сделками." />}</div>
+  const selected = filtered.find((item) => item.id === selectedId) ?? null;
+  return <><PageHeading eyebrow="LIVE SCANNER" title="Торговые возможности" text="Откройте строку, чтобы посмотреть расчёт. Прямые сделки и маршруты можно отправить в симуляцию." action={<div className="search-box"><Search size={15} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по товару…" /></div>} />
+    <div className="toolbar"><div className="segmented">{[['all', 'Все'], ['direct', 'Прямые сделки'], ['multi_step', 'Маршруты'], ['interserver', 'Разница серверов']].map(([key, label]) => <button key={key} className={filter === key ? 'selected' : ''} onClick={() => setFilter(key)}>{label}</button>)}</div><div className="toolbar-meta"><ListFilter size={14} /> {filtered.length} результатов · {filtered.filter((x) => x.kind !== 'interserver').length} доступны для симуляции</div></div>
+    <div className="panel">{loading ? <Loading /> : filtered.length ? <OpportunityTable items={filtered} onChoose={(item) => setSelectedId(item.id)} /> : <EmptyState icon={Search} title="Ничего не найдено" text="Проверьте фильтр или импортируйте рыночные предложения." />}</div>
+    {selected && <OpportunityDetails item={selected} onSimulate={onSimulate} onClose={() => setSelectedId('')} />}
   </>;
 }
 function RouteBuilder() {
@@ -223,7 +251,7 @@ function HistoryPage() {
   return <><PageHeading eyebrow="PRICE HISTORY" title="История цен" text="Сохранённые снимки предложений из локальной SQLite." />
     <div className="panel panel-pad">{loading ? <Loading /> : rows.length ? <><div className="history-summary"><div><span>Наблюдений</span><strong>{rows.length}</strong></div><div><span>Товаров в выборке</span><strong>{new Set(rows.map((x) => x.itemId)).size}</strong></div><div><span>Последняя запись</span><strong>{time(rows[0]?.observedAt)}</strong></div></div><div className="history-bars">{values.map((x) => <div key={x.id} title={`${x.itemId} · ${x.totalPrice} ${x.currency} · ${time(x.observedAt)}`} style={{ height: `${Math.max(4, Number(x.totalPrice) / max * 100)}%` }} />)}</div><div className="table-scroll"><table><thead><tr><th>Товар ID</th><th>Сервер</th><th>Операция</th><th>Общая цена</th><th>Количество</th><th>Наблюдение</th></tr></thead><tbody>{rows.map((x) => <tr key={x.id}><td>{x.itemId}</td><td>{x.serverId}</td><td>{x.action === 'buy' ? 'Покупка' : 'Продажа'}</td><td className="mono">{x.totalPrice} {x.currency}</td><td>{x.quantity}</td><td>{time(x.observedAt)}</td></tr>)}</tbody></table></div></> : <EmptyState icon={Clock3} title="История ещё не накоплена" text="После импорта реальные снимки предложений будут сохраняться в SQLite с отметкой времени." />}</div></>;
 }
-function SimulationPage({ opportunities }: { opportunities: Opportunity[] }) {
+function SimulationPage({ opportunities, initialSelectedId = '' }: { opportunities: Opportunity[]; initialSelectedId?: string }) {
   type Simulation = Awaited<ReturnType<typeof api.simulations>>[number];
   const [selected, setSelected] = useState('');
   const [actual, setActual] = useState<Record<string, string>>({});
@@ -231,12 +259,15 @@ function SimulationPage({ opportunities }: { opportunities: Opportunity[] }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const candidates = opportunities.filter((o) => o.kind !== 'interserver');
+  useEffect(() => {
+    if (initialSelectedId && candidates.some((item) => item.id === initialSelectedId)) setSelected(initialSelectedId);
+  }, [initialSelectedId, opportunities]);
   const load = useCallback(async () => { setRecords(await api.simulations()); }, []);
   useEffect(() => { void load().catch((e) => setMessage(e.message)); }, [load]);
   const start = async () => { if (!selected) return; setBusy(true); setMessage(''); try { await api.startSimulation(selected); await load(); setMessage('Создана виртуальная сделка. Никакие игровые ордера не отправлялись.'); } catch (e) { setMessage(e instanceof Error ? e.message : 'Не удалось создать симуляцию'); } finally { setBusy(false); } };
   const finish = async (record: Simulation, status: 'completed' | 'failed') => { setBusy(true); try { const profit = actual[record.id]?.trim(); await api.updateSimulation(record.id, { status, ...(profit ? { actualProfit: profit } : {}) }); await load(); setMessage(status === 'completed' ? 'Результат симуляции сохранён.' : 'Симуляция помечена как неудачная.'); } catch (e) { setMessage(e instanceof Error ? e.message : 'Не удалось сохранить результат'); } finally { setBusy(false); } };
   return <><PageHeading eyebrow="PAPER TRADING" title="Симуляция" text="Записывайте виртуальное исполнение найденных сделок и сравнивайте ожидаемую и фактическую прибыль." />
-    <div className="panel panel-pad simulation-create"><div className="panel-title"><div><h3>Новая симуляция</h3><p>Выберите рассчитанную возможность и зафиксируйте план сделки</p></div><Activity size={17} className="muted-icon" /></div><div className="simulation-create-row"><select className="field" value={selected} onChange={(e) => setSelected(e.target.value)}><option value="">Выберите прямую сделку или маршрут</option>{candidates.map((o) => <option key={o.id} value={o.id}>{o.kind === 'direct' ? `Прямая · ${o.itemName}` : `Маршрут · ${o.legs.map((l) => l.itemName).join(' → ')}`}</option>)}</select><button className="button primary" disabled={!selected || busy} onClick={() => void start()}>Создать симуляцию</button></div>{message && <div className="probe-result">{message}</div>}{!candidates.length && <div className="empty-inline">Нет доступных сценариев. Сначала загрузите котировки и запустите анализ.</div>}</div>
+    <div className="panel panel-pad simulation-create"><div className="panel-title"><div><h3>Новая симуляция</h3><p>Выберите рассчитанную возможность и зафиксируйте план сделки</p></div><Activity size={17} className="muted-icon" /></div><div className="simulation-create-row"><select className="field" value={selected} onChange={(e) => setSelected(e.target.value)}><option value="">Выберите прямую сделку или маршрут</option>{candidates.map((o) => <option key={o.id} value={o.id}>{o.kind === 'direct' ? `Прямая · ${o.itemName}` : `Маршрут · ${o.legs.map((l) => l.itemName).join(' → ')}`} · +{o.netProfit} {o.kind === 'direct' ? o.currency : o.startCurrency} · {fmt(o.roiPercent)}%</option>)}</select><button className="button primary" disabled={!selected || busy} onClick={() => void start()}>Создать симуляцию</button></div>{message && <div className="probe-result">{message}</div>}{!candidates.length && <div className="empty-inline">Нет доступных сценариев. Сначала загрузите котировки и запустите анализ.</div>}</div>
     <div className="section-row simulation-heading"><div><div className="eyebrow">SIMULATION LOG</div><h2>История виртуального исполнения</h2></div><span className="toolbar-meta">{records.length} записей</span></div>
     <div className="panel">{records.length ? <div className="simulation-list">{records.map((r) => <div className="simulation-row" key={r.id}><div className="simulation-state"><span className={`event-level ${r.status === 'completed' ? 'info' : r.status === 'failed' ? 'error' : 'warning'}`}>{r.status === 'completed' ? 'ВЫПОЛНЕНО' : r.status === 'failed' ? 'НЕУДАЧА' : 'ЗАПЛАНИРОВАНО'}</span><small>{time(r.createdAt)}</small></div><div className="simulation-detail"><strong>{r.kind === 'direct' ? 'Прямая сделка' : 'Многоэтапный маршрут'}</strong><small>Капитал: {r.expectedCapital} {r.currency} · Ожидалось: +{r.expectedProfit} {r.currency}</small>{r.actualProfit !== null && <small>Фактически: {r.actualProfit} {r.currency}</small>}{r.note && <small>{r.note}</small>}</div>{r.status === 'planned' && <div className="simulation-actions"><input className="field actual-input" value={actual[r.id] ?? ''} onChange={(e) => setActual((x) => ({ ...x, [r.id]: e.target.value }))} placeholder="Факт. прибыль" /><button className="button secondary small" disabled={busy} onClick={() => void finish(r, 'completed')}>Выполнено</button><button className="button secondary small" disabled={busy} onClick={() => void finish(r, 'failed')}>Неудача</button></div>}</div>)}</div> : <EmptyState icon={Activity} title="Симуляций пока нет" text="Создайте виртуальный сценарий из актуальной найденной возможности. Статусы и фактическая прибыль сохраняются локально." />}</div>
   </>;
