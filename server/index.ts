@@ -7,7 +7,7 @@ import { desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, sqlite } from './db.ts';
 import { events, offers, priceHistory, servers, settings, simulations } from './schema.ts';
-import { analyzeMarket, DEFAULT_ANALYSIS_OPTIONS, findMultiStepRoutes, findMultiStepRoutesDetailed } from './engine/opportunities.ts';
+import { analyzeMarket, DEFAULT_ANALYSIS_OPTIONS, findMultiStepRoutesDetailed } from './engine/opportunities.ts';
 import { canEncryptSecrets, decryptSecret, encryptSecret } from './services/crypto.ts';
 import { money, moneyString } from './domain/money.ts';
 import { fetchGoodPriceSnapshot, parseNormalizedSnapshot, probeGoodPrice } from './services/goodprice.ts';
