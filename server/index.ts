@@ -230,8 +230,19 @@ app.get('/api/dashboard', async () => {
   };
 });
 
-app.setErrorHandler((error, _request, reply) => {
-  app.log.error({ err: safeError(error) }, 'Request failed');
+app.setErrorHandler((error, request, reply) => {
+  const detail = safeError(error);
+  const route = request.routeOptions.url ?? request.url.split('?')[0];
+  app.log.error({ err: detail, method: request.method, route }, 'Request failed');
+
+  // Keep the UI journal truthful: persist sanitized server errors when possible.
+  // If SQLite itself is failing, fall back to Fastify's local console logger.
+  try {
+    logEvent('error', 'api_error', `${request.method} ${route}: ${detail}`);
+  } catch (loggingError) {
+    app.log.error({ err: safeError(loggingError) }, 'Could not persist API error to the local journal');
+  }
+
   reply.code(500).send({ error: 'Внутренняя ошибка. Подробности записаны в локальный журнал без секретов.' });
 });
 
