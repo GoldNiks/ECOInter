@@ -15,6 +15,10 @@ if errorlevel 1 goto :node_missing
 node -e "const major=Number(process.versions.node.split('.')[0]); process.exit(major >= 20 ? 0 : 1)"
 if errorlevel 1 goto :node_old
 
+echo [0/3] Preparing pnpm workspace...
+> "pnpm-workspace.yaml" echo packages:
+>> "pnpm-workspace.yaml" echo   - .
+
 where corepack >nul 2>nul
 if errorlevel 1 goto :corepack_missing
 
@@ -67,7 +71,7 @@ echo ERROR: Corepack was not found. Reinstall Node.js 20+ with Corepack enabled.
 goto :failed
 
 :pnpm_failed
-echo ERROR: Corepack could not start pnpm. Check your Internet connection and Corepack setup.
+echo ERROR: pnpm could not start. Review the pnpm error above.
 goto :failed
 
 :env_failed
@@ -89,10 +93,10 @@ goto :failed
 :failed
 echo.
 echo Troubleshooting:
-echo  1. Open Command Prompt in this folder.
-echo  2. Run: node --version
-echo  3. Run: corepack pnpm install
-echo  4. Run: corepack pnpm run dev
+echo  1. Confirm Node.js 20 or newer: node --version
+echo  2. Check pnpm: corepack pnpm --version
+echo  3. Install dependencies: corepack pnpm install
+echo  4. Start the app: corepack pnpm run dev
 echo.
 pause
 exit /b 1
