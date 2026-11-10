@@ -1,4 +1,4 @@
-import type { AnalysisOptions, Opportunity, ServerRecord } from '../../shared/types';
+import type { AnalysisOptions, Opportunity, RestrictedOfferSummary, ServerRecord } from '../../shared/types';
 
 const API = '/api';
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -40,8 +40,8 @@ export const api = {
   probeServer: (id: string) => request<{ reachable: boolean; verified: boolean; statusCode?: number; message: string; warning?: string; storesCount?: number; offersCount?: number; tokenConfigured: boolean }>(`/servers/${id}/probe`, { method: 'POST' }),
   saveServerToken: (id: string, token: string) => request<{ ok: boolean; tokenConfigured: boolean }>(`/servers/${id}/token`, { method: 'POST', body: JSON.stringify({ token }) }),
   syncServer: (id: string) => request<{ ok: boolean; imported: number; capturedAt: string }>(`/servers/${id}/sync`, { method: 'POST', body: JSON.stringify({}) }),
-  opportunities: (kind = 'all') => request<{ opportunities: Opportunity[]; count: number; analyzedOffers: number }>(`/opportunities?kind=${kind}`),
-  searchRoutes: (currency: string, capital: string) => request<{ routes: import('../../shared/types').MultiStepOpportunity[]; count: number; analyzedOffers: number }>('/routes/search', { method: 'POST', body: JSON.stringify({ currency, capital }) }),
+  opportunities: (kind = 'all') => request<{ opportunities: Opportunity[]; count: number; analyzedOffers: number; excludedOffers: number; restrictions: RestrictedOfferSummary[] }>(`/opportunities?kind=${kind}`),
+  searchRoutes: (currency: string, capital: string) => request<{ routes: import('../../shared/types').MultiStepOpportunity[]; count: number; analyzedOffers: number; excludedOffers: number; restrictions: RestrictedOfferSummary[] }>('/routes/search', { method: 'POST', body: JSON.stringify({ currency, capital }) }),
   marketOffers: () => request<Array<import('../../shared/types').MarketOffer>>('/market/offers'),
   history: () => request<Array<{ id: number; offerId: string; serverId: string; itemId: string; action: string; currency: string; totalPrice: string; quantity: number; observedAt: string }>>('/history'),
   importSnapshot: (payload: unknown) => request<{ ok: boolean; imported: number }>('/market/import', { method: 'POST', body: JSON.stringify(payload) }),
