@@ -142,8 +142,34 @@ async function syncDueServers(force = false) {
 function getOptions(): AnalysisOptions {
   const row = db.select().from(settings).where(eq(settings.key, 'analysis')).get();
   if (!row) return DEFAULT_ANALYSIS_OPTIONS;
-  try { return { ...DEFAULT_ANALYSIS_OPTIONS, ...analysisOptionsSchema.parse(JSON.parse(row.value)) }; }
-  catch { return DEFAULT_ANALYSIS_OPTIONS; }
+  try {
+    const stored = analysisOptionsSchema.parse(JSON.parse(row.value));
+    const migrated = { ...DEFAULT_ANALYSIS_OPTIONS, ...stored };
+    let changed = false;
+    // Upgrade only values that exactly match the previous built-in defaults.
+    // Deliberate user limits remain untouched.
+    const previousDefaults: Array<[keyof AnalysisOptions, number | string, number | string]> = [
+      ['maxOperations', 6, 8],
+      ['maxUniqueItems', 6, 8],
+      ['maxIntermediateCurrencies', 4, 6],
+      ['maxResults', 100, 250],
+      ['maxCombinations', 100000, 250000],
+      ['maxDurationMs', 5000, 8000],
+      ['minRouteRoiPercent', '5', '0'],
+    ];
+    for (const [key, previous, next] of previousDefaults) {
+      if (stored[key] === previous) {
+        (migrated as unknown as Record<string, unknown>)[key] = next;
+        changed = true;
+      }
+    }
+    if (changed) {
+      db.update(settings).set({
+        value: JSON.stringify(migrated), updatedAt: new Date().toISOString(),
+      }).where(eq(settings.key, 'analysis')).run();
+    }
+    return migrated;
+  } catch { return DEFAULT_ANALYSIS_OPTIONS; }
 }
 function safeError(error: unknown): string {
   const message = error instanceof Error ? error.message : 'Unknown error';
