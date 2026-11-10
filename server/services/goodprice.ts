@@ -10,7 +10,7 @@ export const normalizedSnapshotSchema = z.object({
   offers: z.array(z.object({
     id: z.string().min(1), serverId: z.string().min(1), itemId: z.string().min(1),
     itemName: z.string().min(1), action: z.enum(['buy', 'sell']), currency: z.string().min(1),
-    totalPrice: z.string().regex(/^\\d+(?:\\.\\d{1,8})?$/),
+    totalPrice: z.string().regex(/^\d+(?:\.\d{1,8})?$/),
     quantity: z.number().int().positive().max(1_000_000),
     quoteKind: z.enum(['listing', 'reference']), observedAt: z.string().datetime(),
     sourceId: z.string().optional(),
@@ -19,7 +19,7 @@ export const normalizedSnapshotSchema = z.object({
 
 const API_SUFFIX = '/api/v1/plugins/GoodPrice';
 const SCALE = 100_000_000n;
-const COLOR_TAG = /<\\/?color[^>]*>/gi;
+const COLOR_TAG = /<\/?color[^>]*>/gi;
 
 export interface ProbeResult {
   reachable: boolean;
@@ -47,11 +47,11 @@ export class GoodPriceError extends Error {
  */
 function apiEndpoint(configuredUrl: string, endpoint: string): URL {
   const base = new URL(configuredUrl);
-  const path = base.pathname.replace(/\\/+$/, '');
-  base.pathname = path.replace(/\\/plugin\\/GoodPrice$/i, '').replace(/\\/+$/, '');
+  const pathname = base.pathname.replace(/\/+$/, '');
+  base.pathname = pathname.replace(/\/plugin\/GoodPrice$/i, '').replace(/\/+$/, '');
   base.search = '';
   base.hash = '';
-  return new URL(`${base.toString().replace(/\\/$/, '')}${API_SUFFIX}/${endpoint}`);
+  return new URL(`${base.toString().replace(/\/$/, '')}${API_SUFFIX}/${endpoint}`);
 }
 
 async function requestStores(configuredUrl: string, token?: string, timeoutMs = 8000): Promise<{
@@ -111,7 +111,7 @@ function toScaledDecimal(value: unknown): bigint | null {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) return null;
   const source = typeof value === 'string' ? value.trim() : number.toFixed(8);
-  const match = /^(\\d+)(?:\\.(\\d+))?$/.exec(source);
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(source);
   if (!match) return null;
   const fraction = (match[2] ?? '').slice(0, 8).padEnd(8, '0');
   return BigInt(match[1]) * SCALE + BigInt(fraction || '0');
@@ -123,7 +123,7 @@ function scaledToString(value: bigint): string {
 }
 function deterministicOfferId(serverId: string, storeIndex: number, offerIndex: number, item: string, action: string): string {
   return createHash('sha256')
-    .update(`${serverId}\\0${storeIndex}\\0${offerIndex}\\0${item}\\0${action}`)
+    .update(`${serverId}\0${storeIndex}\0${offerIndex}\0${item}\0${action}`)
     .digest('hex').slice(0, 32);
 }
 
