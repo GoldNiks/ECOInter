@@ -14,10 +14,37 @@ function fresh(offer: MarketOffer, maxAgeSeconds: number, now: number): boolean 
   const stamp = Date.parse(offer.observedAt);
   return Number.isFinite(stamp) && stamp <= now && now - stamp <= maxAgeSeconds * 1000;
 }
-function validOffer(offer: MarketOffer): boolean {
-  // A listed price is not an executable trade when the destination store rejects
-  // the item or its professional-storage compatibility has not been confirmed.
-  if (offer.tradeAllowed === false) return false;
+function storeKey(serverId: string, storeId?: string, storeName?: string): string {
+  return `${serverId}::${storeId?.trim() || storeName?.trim() || 'unknown'}`;
+}
+function normalizedItemName(value: string): string {
+  return value.trim().normalize('NFKC').toLocaleLowerCase('ru-RU');
+}
+function storeLocation(options: AnalysisOptions, serverId: string, storeId?: string, storeName?: string) {
+  const location = options.storeLocations?.[storeKey(serverId, storeId, storeName)];
+  return location && Number.isFinite(location.x) && Number.isFinite(location.z)
+    ? { x: location.x as number, z: location.z as number }
+    : null;
+}
+function distanceBetweenStores(
+  options: AnalysisOptions,
+  serverId: string,
+  a: { storeId?: string; storeName?: string },
+  b: { storeId?: string; storeName?: string },
+): number | null {
+  const left = storeLocation(options, serverId, a.storeId, a.storeName);
+  const right = storeLocation(options, serverId, b.storeId, b.storeName);
+  if (!left || !right) return null;
+  return Math.round(Math.hypot(left.x - right.x, left.z - right.z) * 100) / 100;
+}
+function isManuallyAccepted(offer: MarketOffer, options: AnalysisOptions): boolean {
+  const accepted = options.storeAcceptedItems?.[storeKey(offer.serverId, offer.storeId, offer.storeName)] ?? [];
+  return accepted.some((name) => normalizedItemName(name) === normalizedItemName(offer.itemName));
+}
+function validOffer(offer: MarketOffer, options: AnalysisOptions): boolean {
+  // Professional-store offers stay excluded until the user explicitly confirms
+  // this exact item for this exact store in local settings.
+  if (offer.tradeAllowed === false && !isManuallyAccepted(offer, options)) return false;
   try {
     return Number.isSafeInteger(offer.quantity) && offer.quantity > 0 && money(offer.totalPrice) > ZERO && !!offer.currency;
   } catch { return false; }
@@ -46,62 +73,101 @@ function unitPriceCeil(offer: MarketOffer): bigint {
 export function findDirectOpportunities(
   input: MarketOffer[], options: AnalysisOptions, now = Date.now(),
 ): DirectOpportunity[] {
-  const eligible = input.filter((o) => validOffer(o) && fresh(o, options.maxQuoteAgeSeconds, now));
+  const eligible = input.filter((o) => validOffer(o, options) && fresh(o, options.maxQuoteAgeSeconds, now));
   const groups = new Map<string, MarketOffer[]>();
   for (const offer of eligible) {
-    const key = `${offer.serverId}\u0000${offer.itemId}\u0000${offer.currency}`;
+    const key = `${offer.serverId}\\u0000${offer.itemId}\\u0000${currencyKey(offer.currency)}`;
     groups.set(key, [...(groups.get(key) ?? []), offer]);
   }
+
   const results: DirectOpportunity[] = [];
   for (const offers of groups.values()) {
-    const asks = offers.filter((o) => o.action === 'buy').sort((a, b) => compareUnitPrice(money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity));
-    const bids = offers.filter((o) => o.action === 'sell').sort((a, b) => -compareUnitPrice(money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity));
-    if (!asks.length || !bids.length) continue;
-    const serverId = asks[0].serverId;
-    const fees = feePolicy(options, serverId);
-    const buyPct = money(fees.buyPercent);
-    const sellPct = money(fees.sellPercent);
-    const taxPct = money(fees.taxPercent);
-    let i = 0, j = 0, askLeft = asks[0].quantity, bidLeft = bids[0].quantity;
-    let qty = 0, buyCost = ZERO, sellRevenue = ZERO, feesTotal = ZERO;
-    const buyIds: string[] = [], sellIds: string[] = [], matched: MarketOffer[] = [];
-    while (i < asks.length && j < bids.length) {
-      const ask = asks[i], bid = bids[j];
-      const marginalBuy = add(unitPriceCeil(ask), percentOfSafe(unitPriceCeil(ask), buyPct));
-      const marginalSell = sub(unitPriceFloor(bid), add(percentOfSafe(unitPriceFloor(bid), sellPct), percentOfSafe(unitPriceFloor(bid), taxPct)));
-      if (marginalBuy >= marginalSell) break;
-      const take = Math.min(askLeft, bidLeft);
-      const costPart = grossCostCeil(ask, take);
-      const revenuePart = grossCost(bid, take);
-      const buyFee = percentOfSafe(costPart, buyPct);
-      const sellFee = percentOfSafe(revenuePart, sellPct);
-      const tax = percentOfSafe(revenuePart, taxPct);
-      buyCost = add(buyCost, costPart);
-      sellRevenue = add(sellRevenue, revenuePart);
-      feesTotal = add(feesTotal, add(buyFee, add(sellFee, tax)));
-      qty += take;
-      buyIds.push(ask.id); sellIds.push(bid.id); matched.push(ask, bid);
-      askLeft -= take; bidLeft -= take;
-      if (askLeft === 0) { i++; askLeft = asks[i]?.quantity ?? 0; }
-      if (bidLeft === 0) { j++; bidLeft = bids[j]?.quantity ?? 0; }
+    const asksByStore = new Map<string, MarketOffer[]>();
+    const bidsByStore = new Map<string, MarketOffer[]>();
+    for (const offer of offers) {
+      const key = storeKey(offer.serverId, offer.storeId, offer.storeName);
+      const target = offer.action === 'buy' ? asksByStore : bidsByStore;
+      target.set(key, [...(target.get(key) ?? []), offer]);
     }
-    feesTotal = add(feesTotal, add(money(fees.buyFixed), money(fees.sellFixed)));
-    const capital = add(buyCost, add(percentOfSafe(buyCost, buyPct), money(fees.buyFixed)));
-    const netProceeds = sub(sellRevenue, add(percentOfSafe(sellRevenue, sellPct), add(percentOfSafe(sellRevenue, taxPct), money(fees.sellFixed))));
-    const profit = sub(netProceeds, capital);
-    if (qty <= 0 || profit <= ZERO || profit < money(options.minProfit) || ratioPercent(profit, capital) < money(options.minRoiPercent)) continue;
-    const first = asks[0];
-    results.push({
-      id: `direct:${serverId}:${first.itemId}:${first.currency}:${buyIds.join(',')}:${sellIds.join(',')}`,
-      kind: 'direct', serverId, itemId: first.itemId, itemName: first.itemName,
-      currency: first.currency, quantity: qty, buyCost: moneyString(buyCost),
-      sellRevenue: moneyString(sellRevenue), fees: moneyString(feesTotal),
-      netProfit: moneyString(profit), roiPercent: moneyString(ratioPercent(profit, capital)),
-      quoteKind: quoteKind(matched), observedAt: oldestTimestamp(matched),
-      buyOfferIds: [...new Set(buyIds)], sellOfferIds: [...new Set(sellIds)],
-    });
+
+    // Every physical buy-store/sell-store pair is evaluated separately. This
+    // preserves alternatives instead of merging the whole server into one deal.
+    for (const asksRaw of asksByStore.values()) {
+      const asks = [...asksRaw].sort((a, b) => compareUnitPrice(
+        money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity,
+      ));
+      for (const bidsRaw of bidsByStore.values()) {
+        const bids = [...bidsRaw].sort((a, b) => -compareUnitPrice(
+          money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity,
+        ));
+        if (!asks.length || !bids.length) continue;
+
+        const first = asks[0], last = bids[0];
+        const fees = feePolicy(options, first.serverId);
+        const buyPct = money(fees.buyPercent);
+        const sellPct = money(fees.sellPercent);
+        const taxPct = money(fees.taxPercent);
+        let i = 0, j = 0, askLeft = asks[0].quantity, bidLeft = bids[0].quantity;
+        let qty = 0, buyCost = ZERO, sellRevenue = ZERO, feesTotal = ZERO;
+        const buyIds: string[] = [], sellIds: string[] = [], matched: MarketOffer[] = [];
+        while (i < asks.length && j < bids.length) {
+          const ask = asks[i], bid = bids[j];
+          const marginalBuy = add(unitPriceCeil(ask), percentOfSafe(unitPriceCeil(ask), buyPct));
+          const marginalSell = sub(unitPriceFloor(bid), add(
+            percentOfSafe(unitPriceFloor(bid), sellPct),
+            percentOfSafe(unitPriceFloor(bid), taxPct),
+          ));
+          if (marginalBuy >= marginalSell) break;
+          const take = Math.min(askLeft, bidLeft);
+          const costPart = grossCostCeil(ask, take);
+          const revenuePart = grossCost(bid, take);
+          const buyFee = percentOfSafe(costPart, buyPct);
+          const sellFee = percentOfSafe(revenuePart, sellPct);
+          const tax = percentOfSafe(revenuePart, taxPct);
+          buyCost = add(buyCost, costPart);
+          sellRevenue = add(sellRevenue, revenuePart);
+          feesTotal = add(feesTotal, add(buyFee, add(sellFee, tax)));
+          qty += take;
+          buyIds.push(ask.id); sellIds.push(bid.id); matched.push(ask, bid);
+          askLeft -= take; bidLeft -= take;
+          if (askLeft === 0) { i++; askLeft = asks[i]?.quantity ?? 0; }
+          if (bidLeft === 0) { j++; bidLeft = bids[j]?.quantity ?? 0; }
+        }
+        if (qty <= 0) continue;
+        feesTotal = add(feesTotal, add(money(fees.buyFixed), money(fees.sellFixed)));
+        const capital = add(buyCost, add(percentOfSafe(buyCost, buyPct), money(fees.buyFixed)));
+        const netProceeds = sub(sellRevenue, add(
+          percentOfSafe(sellRevenue, sellPct),
+          add(percentOfSafe(sellRevenue, taxPct), money(fees.sellFixed)),
+        ));
+        const profit = sub(netProceeds, capital);
+        if (profit <= ZERO || profit < money(options.minProfit)
+          || ratioPercent(profit, capital) < money(options.minRoiPercent)) continue;
+
+        const distanceUnits = distanceBetweenStores(options, first.serverId,
+          { storeId: first.storeId, storeName: first.storeName },
+          { storeId: last.storeId, storeName: last.storeName });
+        const uniqueBuyIds = [...new Set(buyIds)];
+        const uniqueSellIds = [...new Set(sellIds)];
+        results.push({
+          id: `direct:${first.serverId}:${first.itemId}:${first.currency}:${storeKey(first.serverId, first.storeId, first.storeName)}:${storeKey(last.serverId, last.storeId, last.storeName)}:${uniqueBuyIds.join(',')}:${uniqueSellIds.join(',')}`,
+          kind: 'direct', serverId: first.serverId, itemId: first.itemId, itemName: first.itemName,
+          currency: first.currency, quantity: qty, buyCost: moneyString(buyCost),
+          sellRevenue: moneyString(sellRevenue), fees: moneyString(feesTotal),
+          netProfit: moneyString(profit), roiPercent: moneyString(ratioPercent(profit, capital)),
+          quoteKind: quoteKind(matched), observedAt: oldestTimestamp(matched),
+          buyOfferIds: uniqueBuyIds, sellOfferIds: uniqueSellIds,
+          buyStoreId: first.storeId, buyStoreName: first.storeName ?? 'Магазин не указан',
+          sellStoreId: last.storeId, sellStoreName: last.storeName ?? 'Магазин не указан',
+          distanceUnits, offerCount: new Set([...uniqueBuyIds, ...uniqueSellIds]).size,
+        });
+      }
+    }
   }
-  return results.sort((a, b) => compareProfit(b.netProfit, a.netProfit)).slice(0, options.maxResults);
+  return results.sort((a, b) => compareQuality(
+    b.netProfit, b.distanceUnits ?? null, b.offerCount ?? 0, b.quantity,
+    a.netProfit, a.distanceUnits ?? null, a.offerCount ?? 0, a.quantity,
+  )).slice(0, options.maxResults);
 }
 
 function percentOfSafe(amount: bigint, percent: bigint): bigint {
@@ -113,10 +179,30 @@ function compareProfit(a: string, b: string): number {
   const aa = money(a), bb = money(b);
   return aa < bb ? -1 : aa > bb ? 1 : 0;
 }
+/** Ranking balances net profit, known travel distance and usable order-book depth. */
+function qualityScore(profit: string, distance: number | null, offerCount: number, quantity: number): number {
+  const profitValue = Number(profit);
+  const distanceFactor = distance === null ? 1 : 1 / (1 + distance / 100);
+  const depthFactor = 1 + Math.log2(1 + Math.max(0, offerCount)) * 0.08
+    + Math.log2(1 + Math.max(0, quantity)) * 0.04;
+  return profitValue * distanceFactor * depthFactor;
+}
+function compareQuality(
+  profitA: string, distanceA: number | null, offersA: number, quantityA: number,
+  profitB: string, distanceB: number | null, offersB: number, quantityB: number,
+): number {
+  const scoreA = qualityScore(profitA, distanceA, offersA, quantityA);
+  const scoreB = qualityScore(profitB, distanceB, offersB, quantityB);
+  if (scoreA !== scoreB) return scoreB - scoreA;
+  const byProfit = compareProfit(profitA, profitB);
+  if (byProfit !== 0) return byProfit;
+  if (distanceA !== null && distanceB !== null && distanceA !== distanceB) return distanceA - distanceB;
+  return offersB - offersA;
+}
 
 /** Cross-server price gaps are informational only: no asset transfer is assumed. */
 export function findInterserverDifferences(input: MarketOffer[], options: AnalysisOptions, now = Date.now()): InterserverDifference[] {
-  const eligible = input.filter((o) => validOffer(o) && fresh(o, options.maxQuoteAgeSeconds, now));
+  const eligible = input.filter((o) => validOffer(o, options) && fresh(o, options.maxQuoteAgeSeconds, now));
   const groups = new Map<string, MarketOffer[]>();
   for (const offer of eligible) {
     const key = `${offer.itemId}\u0000${offer.currency}`;
@@ -156,6 +242,11 @@ interface ConversionEdge {
   buyOffers: MarketOffer[];
   sellOffers: MarketOffer[];
   capacity: number;
+  buyStoreId?: string;
+  buyStoreName?: string;
+  sellStoreId?: string;
+  sellStoreName?: string;
+  distanceUnits: number | null;
 }
 function currencyKey(currency: string): string {
   return currency.trim().normalize('NFKC').toLocaleLowerCase('ru-RU');
@@ -177,7 +268,7 @@ function quantityBreakpoints(book: MarketOffer[], limit: number): number[] {
 }
 
 function buildEdges(offers: MarketOffer[], options: AnalysisOptions, now: number): ConversionEdge[] {
-  const eligible = offers.filter((o) => validOffer(o) && fresh(o, options.maxQuoteAgeSeconds, now));
+  const eligible = offers.filter((o) => validOffer(o, options) && fresh(o, options.maxQuoteAgeSeconds, now));
   const grouped = new Map<string, MarketOffer[]>();
   for (const offer of eligible) {
     const key = `${offer.serverId}\\u0000${offer.itemId}`;
@@ -185,37 +276,53 @@ function buildEdges(offers: MarketOffer[], options: AnalysisOptions, now: number
   }
   const edges: ConversionEdge[] = [];
   for (const group of grouped.values()) {
-    const buyBooks = new Map<string, MarketOffer[]>();
-    const sellBooks = new Map<string, MarketOffer[]>();
+    const buyBooks = new Map<string, { storeId?: string; storeName?: string; currencies: Map<string, MarketOffer[]> }>();
+    const sellBooks = new Map<string, { storeId?: string; storeName?: string; currencies: Map<string, MarketOffer[]> }>();
     for (const offer of group) {
-      const book = offer.action === 'buy' ? buyBooks : sellBooks;
-      const key = currencyKey(offer.currency);
-      book.set(key, [...(book.get(key) ?? []), offer]);
+      const target = offer.action === 'buy' ? buyBooks : sellBooks;
+      const key = storeKey(offer.serverId, offer.storeId, offer.storeName);
+      const store = target.get(key) ?? {
+        storeId: offer.storeId, storeName: offer.storeName,
+        currencies: new Map<string, MarketOffer[]>(),
+      };
+      const currency = currencyKey(offer.currency);
+      store.currencies.set(currency, [...(store.currencies.get(currency) ?? []), offer]);
+      target.set(key, store);
     }
-    for (const [fromKey, rawBuys] of buyBooks) {
-      const buyOffers = [...rawBuys].sort((a, b) =>
-        compareUnitPrice(money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity));
-      for (const [toKey, rawSells] of sellBooks) {
-        if (fromKey === toKey) continue;
-        const sellOffers = [...rawSells].sort((a, b) =>
-          -compareUnitPrice(money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity));
-        const capacity = Math.min(totalListedQuantity(buyOffers), totalListedQuantity(sellOffers));
-        if (capacity <= 0) continue;
 
-        // Keep every depth breakpoint. A route using only the best 3 units can
-        // outperform one that empties all 20 units when a later step has less depth.
-        const breakpoints = new Set<number>([
-          ...quantityBreakpoints(buyOffers, capacity),
-          ...quantityBreakpoints(sellOffers, capacity),
-          capacity,
-        ]);
-        for (const limit of [...breakpoints].filter((x) => x > 0).sort((a, b) => a - b)) {
-          edges.push({
-            key: `${group[0].serverId}:${group[0].itemId}:${fromKey}:${toKey}:${limit}`,
-            serverId: group[0].serverId, itemId: group[0].itemId,
-            itemName: buyOffers[0].itemName, fromCurrency: buyOffers[0].currency.trim(),
-            toCurrency: sellOffers[0].currency.trim(), buyOffers, sellOffers, capacity: limit,
-          });
+    // Keep the physical source and destination shop on every conversion edge.
+    // This lets route search account for the walk between consecutive stores.
+    for (const buyStore of buyBooks.values()) {
+      for (const sellStore of sellBooks.values()) {
+        for (const [fromKey, rawBuys] of buyStore.currencies) {
+          const buyOffers = [...rawBuys].sort((a, b) =>
+            compareUnitPrice(money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity));
+          for (const [toKey, rawSells] of sellStore.currencies) {
+            if (fromKey === toKey) continue;
+            const sellOffers = [...rawSells].sort((a, b) =>
+              -compareUnitPrice(money(a.totalPrice), a.quantity, money(b.totalPrice), b.quantity));
+            const capacity = Math.min(totalListedQuantity(buyOffers), totalListedQuantity(sellOffers));
+            if (capacity <= 0) continue;
+            const breakpoints = new Set<number>([
+              ...quantityBreakpoints(buyOffers, capacity),
+              ...quantityBreakpoints(sellOffers, capacity),
+              capacity,
+            ]);
+            const distanceUnits = distanceBetweenStores(options, group[0].serverId,
+              { storeId: buyStore.storeId, storeName: buyStore.storeName },
+              { storeId: sellStore.storeId, storeName: sellStore.storeName });
+            for (const limit of [...breakpoints].filter((x) => x > 0).sort((a, b) => a - b)) {
+              edges.push({
+                key: `${group[0].serverId}:${group[0].itemId}:${fromKey}:${toKey}:${storeKey(group[0].serverId, buyStore.storeId, buyStore.storeName)}:${storeKey(group[0].serverId, sellStore.storeId, sellStore.storeName)}:${limit}`,
+                serverId: group[0].serverId, itemId: group[0].itemId,
+                itemName: buyOffers[0].itemName, fromCurrency: buyOffers[0].currency.trim(),
+                toCurrency: sellOffers[0].currency.trim(), buyOffers, sellOffers, capacity: limit,
+                buyStoreId: buyStore.storeId, buyStoreName: buyStore.storeName,
+                sellStoreId: sellStore.storeId, sellStoreName: sellStore.storeName,
+                distanceUnits,
+              });
+            }
+          }
         }
       }
     }
@@ -288,7 +395,28 @@ function executeEdge(edge: ConversionEdge, balance: bigint, options: AnalysisOpt
     unspentInputBalance: moneyString(sub(balance, inputUsed)),
     buyOfferId: buy.ids[0], sellOfferId: sell.ids[0],
     buyOfferIds: buy.ids, sellOfferIds: sell.ids,
+    buyStoreId: edge.buyStoreId, buyStoreName: edge.buyStoreName ?? 'Магазин не указан',
+    sellStoreId: edge.sellStoreId, sellStoreName: edge.sellStoreName ?? 'Магазин не указан',
+    distanceUnits: edge.distanceUnits,
   };
+}
+
+function totalRouteDistance(legs: RouteLeg[], options: AnalysisOptions, serverId: string): number | null {
+  let total = 0;
+  for (let index = 0; index < legs.length; index++) {
+    const current = legs[index];
+    if (current.distanceUnits === null || current.distanceUnits === undefined) return null;
+    total += current.distanceUnits;
+    if (index > 0) {
+      const previous = legs[index - 1];
+      const transfer = distanceBetweenStores(options, serverId,
+        { storeId: previous.sellStoreId, storeName: previous.sellStoreName },
+        { storeId: current.buyStoreId, storeName: current.buyStoreName });
+      if (transfer === null) return null;
+      total += transfer;
+    }
+  }
+  return Math.round(total * 100) / 100;
 }
 
 /** Search diagnostics prevent a bounded search from being misreported as a definitive empty result. */
@@ -399,6 +527,8 @@ export function findMultiStepRoutesDetailed(
             roiPercent: moneyString(ratioPercent(profit, capital)), operations: nextLegs.length * 2,
             legs: nextLegs, quoteKind: quoteKind(usedQuotes), observedAt: oldestTimestamp(usedQuotes),
             capitalAssumed: assumedCapital,
+            distanceUnits: totalRouteDistance(nextLegs, options, edge.serverId),
+            offerCount: new Set(usedQuotes.map((offer) => offer.id)).size,
           });
           continue;
         }
@@ -409,7 +539,10 @@ export function findMultiStepRoutesDetailed(
     };
     walk(start, initial, [], new Set(), new Set([startKey]));
   }
-  const routes = results.sort((a, b) => compareProfit(b.netProfit, a.netProfit)).slice(0, options.maxResults);
+  const routes = results.sort((a, b) => compareQuality(
+    b.netProfit, b.distanceUnits ?? null, b.offerCount ?? 0, b.legs.reduce((sum, leg) => sum + leg.quantity, 0),
+    a.netProfit, a.distanceUnits ?? null, a.offerCount ?? 0, a.legs.reduce((sum, leg) => sum + leg.quantity, 0),
+  )).slice(0, options.maxResults);
   return {
     routes,
     stats: { edgeCount: edges.length, combinations, durationMs: Date.now() - startedAt, truncated: stopped, stopReason },
