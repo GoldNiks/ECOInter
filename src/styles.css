@@ -26,3 +26,37 @@
 .opportunity-row-actions { display: flex; align-items: center; gap: 6px; position: relative; z-index: 1; }
 .opportunity-row-actions .button { pointer-events: auto; }
 .opportunity-open { cursor: pointer; pointer-events: auto; }
+
+
+/* Open opportunity details immediately above the current page, not below the table. */
+.opportunity-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(3, 8, 14, .78);
+  backdrop-filter: blur(5px);
+}
+.opportunity-detail {
+  width: min(920px, calc(100vw - 32px));
+  max-height: min(88vh, 920px);
+  margin: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .58);
+}
+.opportunity-detail-overlay .opportunity-detail .panel-title {
+  position: sticky;
+  top: -20px;
+  z-index: 2;
+  padding: 4px 0 12px;
+  background: linear-gradient(180deg, #121c29 82%, rgba(18, 28, 41, 0));
+}
+@media (max-width: 650px) {
+  .opportunity-detail-overlay { padding: 10px; }
+  .opportunity-detail { width: 100%; max-height: calc(100dvh - 20px); padding: 16px; }
+  .opportunity-detail-overlay .opportunity-detail .panel-title { top: -16px; }
+}
