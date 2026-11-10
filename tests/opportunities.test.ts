@@ -48,6 +48,35 @@ test('multi-step engine reproduces the two-currency example exactly', () => {
   assert.deepEqual(route.legs.map((x) => [x.itemName, x.quantity]), [['Товар A', 3], ['Товар B', 2]]);
 });
 
+test('route start currency resolves regardless of letter case', () => {
+  const market: MarketOffer[] = [
+    offer('m-ask', 'A', 'Товар A', 'buy', 'Мухоморск Credit', '150', 3),
+    offer('m-bid', 'A', 'Товар A', 'sell', 'Золотой Кредит', '200', 3),
+    offer('g-ask', 'B', 'Товар B', 'buy', 'Золотой Кредит', '200', 2),
+    offer('g-bid', 'B', 'Товар B', 'sell', 'Мухоморск Credit', '500', 2),
+  ];
+  const found = findMultiStepRoutes(market, {
+    ...options, startingCapitalByCurrency: { 'МУХОМОРСК CREDIT': '150' },
+  }, Date.parse(now));
+
+  const route = found.find((x) => x.startCurrency === 'Мухоморск Credit');
+  assert.ok(route, 'uppercase user input should match the original GoodPrice currency name');
+  assert.equal(route.initialCapital, '150');
+  assert.equal(route.finalCapital, '500');
+  assert.equal(route.netProfit, '350');
+});
+
+test('currency names differing only by case are not treated as a conversion', () => {
+  const market = [
+    offer('same-ask', 'SAME', 'Same Currency', 'buy', 'RELAX', '10', 1),
+    offer('same-bid', 'SAME', 'Same Currency', 'sell', 'relax', '20', 1),
+  ];
+  const found = findMultiStepRoutes(market, {
+    ...options, startingCapitalByCurrency: { RELAX: '100' },
+  }, Date.parse(now));
+  assert.deepEqual(found, []);
+});
+
 test('direct and multi-step analyses run independently', () => {
   const market = [...routeFixture,
     offer('c-ask', 'C', 'Товар C', 'buy', 'RELAX', '50', 10),
