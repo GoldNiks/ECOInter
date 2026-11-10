@@ -6,7 +6,7 @@ import {
   Server, SlidersHorizontal, Trash2, TrendingUp, X,
 } from 'lucide-react';
 import { api } from './lib/api';
-import type { AnalysisOptions, Opportunity, RestrictedOfferSummary, ServerRecord } from '../shared/types';
+import type { AnalysisOptions, MarketOffer, Opportunity, RestrictedOfferSummary, ServerRecord } from '../shared/types';
 
 type Page = 'overview' | 'opportunities' | 'routes' | 'products' | 'history' | 'simulation' | 'servers' | 'journal' | 'settings';
 const NAV: Array<{ id: Page; label: string; icon: typeof LayoutDashboard }> = [
@@ -21,6 +21,9 @@ const NAV: Array<{ id: Page; label: string; icon: typeof LayoutDashboard }> = [
   { id: 'settings', label: 'Настройки', icon: Settings2 },
 ];
 const fmt = (value: string | number, digits = 2) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(Number(value));
+function storeSettingsKey(offer: Pick<MarketOffer, 'serverId' | 'storeId' | 'storeName'>): string {
+  return `${offer.serverId}::${offer.storeId?.trim() || offer.storeName?.trim() || 'unknown'}`;
+}
 const time = (value?: string | null) => value ? new Date(value).toLocaleString('ru-RU') : '—';
 
 export default function App() {
@@ -142,18 +145,20 @@ function statusLabel(status: string) { return ({ imported_normalized: 'Рыно�
 function Loading() { return <div className="loading"><LoaderCircle className="spin" size={20} /> Загрузка данных…</div>; }
 function EmptyState({ icon: Icon, title, text, action }: { icon: typeof Activity; title: string; text: string; action?: React.ReactNode }) { return <div className="empty-state"><div className="empty-icon"><Icon size={22} /></div><h3>{title}</h3><p>{text}</p>{action}</div>; }
 function OpportunityTable({ items, compact = false, onChoose, onSimulate }: { items: Opportunity[]; compact?: boolean; onChoose?: (item: Opportunity) => void; onSimulate?: (id: string) => void }) {
-  return <div className="table-scroll"><table><thead><tr><th>Возможность</th><th>Тип</th><th>Маршрут / сервер</th><th>Капитал</th><th>Результат</th><th>Доходность</th><th>Данные</th>{onChoose && <th>Действие</th>}</tr></thead><tbody>{items.map((item) => {
+  return <div className="table-scroll"><table><thead><tr><th>Возможность</th><th>Тип</th><th>Маршрут / магазины</th><th>Капитал</th><th>Результат</th><th>Доходность</th><th>Дистанция</th><th>Заявки</th><th>Данные</th>{onChoose && <th>Действие</th>}</tr></thead><tbody>{items.map((item) => {
     const name = item.kind === 'direct' ? item.itemName : item.kind === 'multi_step' ? item.legs.map((l) => l.itemName).join(' → ') : item.itemName;
     const profit = item.kind === 'interserver' ? item.priceGap : item.netProfit;
     const capital = item.kind === 'multi_step' ? `${item.initialCapital} ${item.startCurrency}` : item.kind === 'direct' ? `${item.buyCost} ${item.currency}` : `${item.referenceBuyCost} ${item.currency}`;
     const currency = item.kind === 'multi_step' ? item.startCurrency : item.currency;
     const roi = item.kind === 'interserver' ? 'справочно' : `${fmt(item.roiPercent)}%`;
+    const distance = item.kind !== 'interserver' && item.distanceUnits != null ? `${fmt(item.distanceUnits, 1)} ед.` : 'не задано';
+    const offerCount = item.kind === 'interserver' ? '—' : item.offerCount ?? item.buyOfferIds.length + item.sellOfferIds.length;
     return <tr key={item.id} className={onChoose ? 'opportunity-row' : undefined} onClick={onChoose ? () => onChoose(item) : undefined}>
       <td><strong>{name}</strong><small>{item.kind === 'multi_step' ? `${item.legs.length} товара · ${item.operations} операции` : `${item.quantity} ед.`}</small></td>
       <td><span className={`type-pill ${item.kind}`}>{item.kind === 'direct' ? 'Прямая' : item.kind === 'multi_step' ? 'Маршрут' : 'Разница цен'}</span></td>
-      <td>{item.kind === 'direct' ? item.serverId : item.kind === 'multi_step' ? `${item.startCurrency} → ${item.endCurrency}` : `${item.buyServerId} → ${item.sellServerId}`}</td>
+      <td>{item.kind === 'direct' ? <><strong>{item.buyStoreName ?? 'Магазин покупки'}</strong><small>→ {item.sellStoreName ?? 'Магазин приёма'} · {item.serverId}</small></> : item.kind === 'multi_step' ? <><strong>{item.startCurrency} → {item.endCurrency}</strong><small>{item.serverId}</small></> : `${item.buyServerId} → ${item.sellServerId}`}</td>
       <td className="mono">{capital}</td><td><strong className={item.kind === 'interserver' ? 'mono' : 'positive mono'}>{item.kind === 'interserver' ? '' : '+'}{fmt(profit)} {currency}</strong></td>
-      <td className="mono">{roi}</td><td><span className="data-tag">{item.kind === 'interserver' ? 'Перенос не подтверждён' : item.quoteKind === 'listing' ? 'Предложения' : 'Оценка'}</span></td>
+      <td className="mono">{roi}</td><td className="mono">{distance}</td><td className="mono">{offerCount}</td><td><span className="data-tag">{item.kind === 'interserver' ? 'Перенос не подтверждён' : item.quoteKind === 'listing' ? 'Предложения' : 'Оценка'}</span></td>
       {onChoose && <td><div className="opportunity-row-actions">
         <button type="button" className="button secondary small" onClick={(event) => { event.stopPropagation(); onChoose(item); }}>Открыть</button>
         {item.kind !== 'interserver' && <button type="button" className="button primary small" onClick={(event) => { event.stopPropagation(); onSimulate?.(item.id); }}>В симуляцию</button>}
@@ -182,11 +187,11 @@ function OpportunityDetails({ item, onSimulate, onClose }: { item: Opportunity; 
       <div className="hint-block"><AlertTriangle size={16} /> Это не исполнимая сделка. Анализатор видит разницу цен между серверами, но не располагает подтверждённым способом переноса товара или валюты между ними. Поэтому добавить её в симуляцию нельзя.</div>
       <div className="opportunity-detail-grid"><div><span>Покупка</span><b>{item.referenceBuyCost} {item.currency}</b><small>{item.buyServerId}</small></div><div><span>Продажа</span><b>{item.referenceSellRevenue} {item.currency}</b><small>{item.sellServerId}</small></div><div><span>Разница цен</span><b>{item.priceGap} {item.currency}</b></div><div><span>Количество</span><b>{item.quantity} ед.</b></div></div>
     </> : item.kind === 'direct' ? <>
-      <div className="opportunity-detail-grid"><div><span>Количество</span><b>{item.quantity} ед.</b></div><div><span>Затраты на покупку</span><b>{item.buyCost} {currency}</b></div><div><span>Выручка</span><b>{item.sellRevenue} {currency}</b></div><div><span>Комиссии и налоги</span><b>{item.fees} {currency}</b></div><div><span>Чистая прибыль</span><b className="positive">+{item.netProfit} {currency}</b></div><div><span>Доходность</span><b>{fmt(item.roiPercent)}%</b></div><div><span>Сервер</span><b>{item.serverId}</b></div><div><span>Котировка</span><b>{item.quoteKind === 'listing' ? 'Рыночные заявки' : 'Справочная оценка'}</b></div></div>
-      <div className="detail-note">Покупка и перепродажа собраны из {item.buyOfferIds.length} заявок на покупку и {item.sellOfferIds.length} заявок на приём.</div>
+      <div className="opportunity-detail-grid"><div><span>Количество</span><b>{item.quantity} ед.</b></div><div><span>Затраты на покупку</span><b>{item.buyCost} {currency}</b></div><div><span>Выручка</span><b>{item.sellRevenue} {currency}</b></div><div><span>Комиссии и налоги</span><b>{item.fees} {currency}</b></div><div><span>Чистая прибыль</span><b className="positive">+{item.netProfit} {currency}</b></div><div><span>Доходность</span><b>{fmt(item.roiPercent)}%</b></div><div><span>Магазин покупки</span><b>{item.buyStoreName ?? 'Не указан'}</b></div><div><span>Магазин приёма</span><b>{item.sellStoreName ?? 'Не указан'}</b></div><div><span>Расстояние между магазинами</span><b>{item.distanceUnits == null ? 'Координаты не заданы' : `${fmt(item.distanceUnits, 1)} ед.`}</b></div><div><span>Сервер</span><b>{item.serverId}</b></div><div><span>Задействовано заявок</span><b>{item.offerCount ?? item.buyOfferIds.length + item.sellOfferIds.length}</b></div><div><span>Котировка</span><b>{item.quoteKind === 'listing' ? 'Рыночные заявки' : 'Справочная оценка'}</b></div></div>
+      <div className="detail-note">Покупка: {item.buyOfferIds.length} заявок · приём: {item.sellOfferIds.length} заявок. Возможности рассчитаны отдельно для этой пары магазинов.</div>
     </> : <>
-      <div className="opportunity-detail-grid"><div><span>Стартовый капитал</span><b>{item.initialCapital} {currency}</b></div><div><span>Конечный капитал</span><b className="positive">{item.finalCapital} {currency}</b></div><div><span>Чистая прибыль</span><b className="positive">+{item.netProfit} {currency}</b></div><div><span>Доходность</span><b>{fmt(item.roiPercent)}%</b></div><div><span>Сервер</span><b>{item.serverId}</b></div><div><span>Источник</span><b>{item.quoteKind === 'listing' ? 'Рыночные заявки' : 'Справочная оценка'}</b></div></div>
-      <div className="route-step-list">{item.legs.map((leg,index)=><div className="route-step" key={`${leg.buyOfferId}-${leg.sellOfferId}-${index}`}><div className="step-number">{index+1}</div><div className="step-content"><strong>{leg.itemName}</strong><small>Купить {leg.quantity} ед. за {leg.buyCost} {leg.fromCurrency}</small><small>Продать за {leg.sellRevenue} {leg.toCurrency}</small>{(leg.buyOfferIds.length>1||leg.sellOfferIds.length>1)&&<small>Объединено заявок: покупка {leg.buyOfferIds.length}, приём {leg.sellOfferIds.length}</small>}</div><div className="step-balance"><span>Баланс после этапа</span><b>{leg.outputBalance} {leg.toCurrency}</b></div></div>)}</div>
+      <div className="opportunity-detail-grid"><div><span>Стартовый капитал</span><b>{item.initialCapital} {currency}</b></div><div><span>Конечный капитал</span><b className="positive">{item.finalCapital} {currency}</b></div><div><span>Чистая прибыль</span><b className="positive">+{item.netProfit} {currency}</b></div><div><span>Доходность</span><b>{fmt(item.roiPercent)}%</b></div><div><span>Общая дистанция</span><b>{item.distanceUnits == null ? 'Координаты не заданы' : `${fmt(item.distanceUnits, 1)} ед.`}</b></div><div><span>Задействовано заявок</span><b>{item.offerCount ?? '—'}</b></div><div><span>Сервер</span><b>{item.serverId}</b></div><div><span>Источник</span><b>{item.quoteKind === 'listing' ? 'Рыночные заявки' : 'Справочная оценка'}</b></div></div>
+      <div className="route-step-list">{item.legs.map((leg,index)=><div className="route-step" key={`${leg.buyOfferId}-${leg.sellOfferId}-${index}`}><div className="step-number">{index+1}</div><div className="step-content"><strong>{leg.itemName}</strong><small>Купить {leg.quantity} ед. за {leg.buyCost} {leg.fromCurrency}</small><small>Магазин покупки: {leg.buyStoreName ?? 'Не указан'}</small><small>Продать за {leg.sellRevenue} {leg.toCurrency}</small><small>Магазин приёма: {leg.sellStoreName ?? 'Не указан'} · дистанция этапа: {leg.distanceUnits == null ? 'н/д' : `${fmt(leg.distanceUnits, 1)} ед.`}</small>{(leg.buyOfferIds.length>1||leg.sellOfferIds.length>1)&&<small>Объединено заявок: покупка {leg.buyOfferIds.length}, приём {leg.sellOfferIds.length}</small>}</div><div className="step-balance"><span>Баланс после этапа</span><b>{leg.outputBalance} {leg.toCurrency}</b></div></div>)}</div>
     </>}
     {item.kind !== 'interserver' && <div className="opportunity-detail-actions"><button type="button" className="button primary" onClick={() => onSimulate(item.id)}><Activity size={14} /> Выбрать для симуляции</button><span className="muted-text">Создаётся виртуальный сценарий. Игровые ордера не отправляются.</span></div>}
     </div>
@@ -248,7 +253,7 @@ function RouteBuilder() {
   return <><PageHeading eyebrow="ROUTE LAB" title="Конструктор маршрутов" text="Поиск многоэтапных цепочек с заданной начальной валютой и капиталом." />
     <div className="builder-layout"><div className="panel panel-pad"><div className="panel-title"><div><h3>Параметры поиска</h3><p>Начальный актив и доступный капитал</p></div><SlidersHorizontal size={17} className="muted-icon" /></div><label className="field-label">Начальная валюта</label><input className="field" list="route-currencies" value={currency} onChange={(e) => setCurrency(e.target.value)} placeholder="Выберите валюту из рынка" /><datalist id="route-currencies">{currencies.map((name) => <option key={name} value={name} />)}</datalist><label className="field-label">Начальный капитал</label><input className="field" value={capital} onChange={(e) => setCapital(e.target.value)} inputMode="decimal" /><div className="hint-block"><AlertTriangle size={16} /> Маршрут состоит из последовательных пар «купить товар → продать товар». Все этапы в одном сервере; межсерверный перенос не предполагается.</div><button className="button primary full" onClick={() => void search()} disabled={busy || !currency.trim() || !capital.trim()}>{busy ? <><LoaderCircle size={14} className="spin" /> Анализ…</> : <><Compass size={14} /> Найти маршруты</>}</button>{message && <div className="probe-result">{message}</div>}</div>
       <div className="panel panel-pad route-results"><div className="panel-title"><div><h3>Результаты поиска</h3><p>{routes.length} маршрутов · отдельный многоэтапный движок</p></div><Route size={17} className="muted-icon" /></div>
-        {chosen ? <><div className="route-summary"><div><span>Старт</span><b>{chosen.initialCapital} {chosen.startCurrency}</b></div><div><span>Финиш</span><b className="positive">{chosen.finalCapital} {chosen.endCurrency}</b></div><div><span>Чистая прибыль</span><b className="positive">+{chosen.netProfit}</b></div><div><span>Доходность</span><b>{fmt(chosen.roiPercent)}%</b></div></div><div className="route-step-list">{chosen.legs.map((leg, index) => <div className="route-step" key={`${leg.buyOfferId}-${leg.sellOfferId}`}><div className="step-number">{index + 1}</div><div className="step-content"><strong>{leg.itemName}</strong><small>Купить {leg.quantity} ед. за {leg.buyCost} {leg.fromCurrency}</small><small>Продать за {leg.sellRevenue} {leg.toCurrency}</small>{(leg.buyOfferIds.length > 1 || leg.sellOfferIds.length > 1) && <small>Собрано из заявок: покупка {leg.buyOfferIds.length}, приём {leg.sellOfferIds.length}</small>}{Number(leg.unspentInputBalance) > 0 && <small>Остаток: {fmt(leg.unspentInputBalance)} {leg.fromCurrency}{index === 0 ? ' · учтён в итоговом капитале' : ' · не включён в итог в стартовой валюте'}</small>}</div><div className="step-balance"><span>Баланс</span><b>{leg.outputBalance} {leg.toCurrency}</b></div></div>)}</div><div className="hint-block"><ShieldCheck size={16} /> {chosen.quoteKind === 'listing' ? 'Расчёт основан на предложениях типа listing. Доступность всё равно нужно перепроверить перед сделкой.' : 'В маршруте есть справочные котировки: результат является оценкой, а не исполнимой сделкой.'} {chosen.capitalAssumed ? 'Стартовый капитал был подобран автоматически.' : ''} {chosen.legs.some((leg, index) => index > 0 && Number(leg.unspentInputBalance) > 0) ? 'Неиспользованные остатки промежуточных валют показаны в шагах, но не включены в итоговый баланс стартовой валюты.' : ''}</div><button className="text-button" onClick={() => setSelected('')}>Назад к списку</button></> : routes.length ? <div className="route-choice-list">{routes.map((r) => <button className="route-choice" key={r.id} onClick={() => setSelected(r.id)}><div><strong>{r.legs.map((x) => x.itemName).join(' → ')}</strong><small>{r.operations} операции · {r.startCurrency} → {r.endCurrency}</small></div><div><b className="positive">+{r.netProfit}</b><small>{fmt(r.roiPercent)}% ROI</small></div></button>)}</div> : <EmptyState icon={Route} title="Задайте капитал и запустите поиск" text="Конструктор покажет последовательность товаров, количества, стоимость каждого этапа, промежуточные балансы и итоговую прибыль." />}
+        {chosen ? <><div className="route-summary"><div><span>Старт</span><b>{chosen.initialCapital} {chosen.startCurrency}</b></div><div><span>Финиш</span><b className="positive">{chosen.finalCapital} {chosen.endCurrency}</b></div><div><span>Чистая прибыль</span><b className="positive">+{chosen.netProfit}</b></div><div><span>Доходность</span><b>{fmt(chosen.roiPercent)}%</b></div><div><span>Дистанция</span><b>{chosen.distanceUnits == null ? 'н/д' : `${fmt(chosen.distanceUnits, 1)} ед.`}</b></div></div><div className="route-step-list">{chosen.legs.map((leg, index) => <div className="route-step" key={`${leg.buyOfferId}-${leg.sellOfferId}`}><div className="step-number">{index + 1}</div><div className="step-content"><strong>{leg.itemName}</strong><small>Купить {leg.quantity} ед. за {leg.buyCost} {leg.fromCurrency}</small><small>Продать за {leg.sellRevenue} {leg.toCurrency}</small>{(leg.buyOfferIds.length > 1 || leg.sellOfferIds.length > 1) && <small>Собрано из заявок: покупка {leg.buyOfferIds.length}, приём {leg.sellOfferIds.length}</small>}{Number(leg.unspentInputBalance) > 0 && <small>Остаток: {fmt(leg.unspentInputBalance)} {leg.fromCurrency}{index === 0 ? ' · учтён в итоговом капитале' : ' · не включён в итог в стартовой валюте'}</small>}</div><div className="step-balance"><span>Баланс</span><b>{leg.outputBalance} {leg.toCurrency}</b></div></div>)}</div><div className="hint-block"><ShieldCheck size={16} /> {chosen.quoteKind === 'listing' ? 'Расчёт основан на предложениях типа listing. Доступность всё равно нужно перепроверить перед сделкой.' : 'В маршруте есть справочные котировки: результат является оценкой, а не исполнимой сделкой.'} {chosen.capitalAssumed ? 'Стартовый капитал был подобран автоматически.' : ''} {chosen.legs.some((leg, index) => index > 0 && Number(leg.unspentInputBalance) > 0) ? 'Неиспользованные остатки промежуточных валют показаны в шагах, но не включены в итоговый баланс стартовой валюты.' : ''}</div><button className="text-button" onClick={() => setSelected('')}>Назад к списку</button></> : routes.length ? <div className="route-choice-list">{routes.map((r) => <button className="route-choice" key={r.id} onClick={() => setSelected(r.id)}><div><strong>{r.legs.map((x) => x.itemName).join(' → ')}</strong><small>{r.operations} операции · {r.startCurrency} → {r.endCurrency}</small></div><div><b className="positive">+{r.netProfit}</b><small>{fmt(r.roiPercent)}% ROI</small></div></button>)}</div> : <EmptyState icon={Route} title="Задайте капитал и запустите поиск" text="Конструктор покажет последовательность товаров, количества, стоимость каждого этапа, промежуточные балансы и итоговую прибыль." />}
       </div></div>
   </>;
 }
@@ -308,13 +313,79 @@ function ServersPage({ servers, onChange, notify }: { servers: ServerRecord[]; o
 function JournalPage({ events }: { events: Awaited<ReturnType<typeof api.events>> }) { return <><PageHeading eyebrow="EVENT LOG" title="Журнал событий" text="Подключения, импорт, ошибки источников и изменения настроек." /><div className="panel">{events.length ? <div className="event-list">{events.map((e) => <div className="event-row" key={e.id}><span className={`event-level ${e.level}`}>{e.level.toUpperCase()}</span><div><strong>{e.message}</strong><small>{e.type} · {e.serverId ?? 'система'}</small></div><time>{time(e.createdAt)}</time></div>)}</div> : <EmptyState icon={History} title="Журнал пуст" text="События появятся после добавления серверов, проверки источников и импорта данных." />}</div></>; }
 function SettingsPage({ notify }: { notify: (s: string) => void }) {
   const [settings, setSettings] = useState<AnalysisOptions | null>(null);
+  const [marketOffers, setMarketOffers] = useState<MarketOffer[]>([]);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { void api.analysisSettings().then(setSettings).catch((e) => notify(e.message)); }, [notify]);
+  useEffect(() => {
+    void api.analysisSettings().then(setSettings).catch((e) => notify(e.message));
+    void api.marketOffers().then(setMarketOffers).catch((e) => notify(e.message));
+  }, [notify]);
+  const stores = useMemo(() => {
+    const grouped = new Map<string, { key: string; serverId: string; storeName: string; restrictedItems: string[] }>();
+    for (const offer of marketOffers) {
+      const key = storeSettingsKey(offer);
+      const entry = grouped.get(key) ?? {
+        key, serverId: offer.serverId, storeName: offer.storeName || 'Магазин без названия',
+        restrictedItems: [],
+      };
+      if (offer.tradeAllowed === false && !entry.restrictedItems.includes(offer.itemName)) {
+        entry.restrictedItems.push(offer.itemName);
+      }
+      grouped.set(key, entry);
+    }
+    return [...grouped.values()].sort((a,b) => a.storeName.localeCompare(b.storeName, 'ru'));
+  }, [marketOffers]);
   if (!settings) return <Loading />;
   const update = (key: keyof AnalysisOptions, value: number | string) => setSettings((s) => s ? { ...s, [key]: value } : s);
-  const save = async () => { setSaving(true); try { await api.saveAnalysisSettings(settings); notify('Настройки аналитики сохранены.'); } catch (e) { notify(e instanceof Error ? e.message : 'Ошибка сохранения'); } finally { setSaving(false); } };
-  return <><PageHeading eyebrow="ANALYSIS SETTINGS" title="Настройки аналитики" text="Параметры прямого поиска и глубины многоэтапных торговых цепочек." />
+  const setCoordinate = (key: string, axis: 'x' | 'z', raw: string) => {
+    setSettings((current) => {
+      if (!current) return current;
+      const next = { ...(current.storeLocations ?? {}) };
+      const location = { ...(next[key] ?? {}) };
+      if (raw.trim() === '') delete location[axis];
+      else {
+        const value = Number(raw);
+        if (Number.isFinite(value)) location[axis] = value;
+      }
+      if (location.x === undefined && location.z === undefined) delete next[key];
+      else next[key] = location;
+      return { ...current, storeLocations: next };
+    });
+  };
+  const toggleAcceptedItem = (key: string, itemName: string, checked: boolean) => {
+    setSettings((current) => {
+      if (!current) return current;
+      const next = { ...(current.storeAcceptedItems ?? {}) };
+      const accepted = new Set(next[key] ?? []);
+      if (checked) accepted.add(itemName); else accepted.delete(itemName);
+      if (accepted.size) next[key] = [...accepted]; else delete next[key];
+      return { ...current, storeAcceptedItems: next };
+    });
+  };
+  const save = async () => {
+    setSaving(true);
+    try { await api.saveAnalysisSettings(settings); notify('Настройки аналитики и логистики сохранены.'); }
+    catch (e) { notify(e instanceof Error ? e.message : 'Ошибка сохранения'); }
+    finally { setSaving(false); }
+  };
+  return <><PageHeading eyebrow="ANALYSIS SETTINGS" title="Настройки аналитики" text="Глубина поиска сделок, логистика между магазинами и подтверждение совместимости товаров." />
     <div className="settings-grid"><div className="panel panel-pad"><h3>Глубина анализа</h3><div className="form-grid"><label><span>Максимум операций</span><input className="field" type="number" min="2" max="12" value={settings.maxOperations} onChange={(e) => update('maxOperations', Number(e.target.value))} /></label><label><span>Уникальных товаров</span><input className="field" type="number" min="1" max="20" value={settings.maxUniqueItems} onChange={(e) => update('maxUniqueItems', Number(e.target.value))} /></label><label><span>Промежуточных валют</span><input className="field" type="number" min="1" max="12" value={settings.maxIntermediateCurrencies} onChange={(e) => update('maxIntermediateCurrencies', Number(e.target.value))} /></label><label><span>Максимум результатов</span><input className="field" type="number" min="1" max="1000" value={settings.maxResults} onChange={(e) => update('maxResults', Number(e.target.value))} /></label><label><span>Лимит комбинаций</span><input className="field" type="number" min="100" max="1000000" value={settings.maxCombinations} onChange={(e) => update('maxCombinations', Number(e.target.value))} /></label><label><span>Лимит времени, мс</span><input className="field" type="number" min="100" max="30000" value={settings.maxDurationMs} onChange={(e) => update('maxDurationMs', Number(e.target.value))} /></label><label><span>Минимальная прибыль</span><input className="field" value={settings.minProfit} onChange={(e) => update('minProfit', e.target.value)} /></label><label><span>Минимальная доходность сделок, %</span><input className="field" value={settings.minRoiPercent} onChange={(e) => update('minRoiPercent', e.target.value)} /></label><label><span>Минимальная доходность маршрута, %</span><input className="field" value={settings.minRouteRoiPercent} onChange={(e) => update('minRouteRoiPercent', e.target.value)} /></label><label><span>Макс. возраст котировки, сек.</span><input className="field" type="number" value={settings.maxQuoteAgeSeconds} onChange={(e) => update('maxQuoteAgeSeconds', Number(e.target.value))} /></label></div><button className="button primary" onClick={() => void save()} disabled={saving}>{saving ? 'Сохранение…' : 'Сохранить параметры'}</button></div>
-      <div className="panel panel-pad"><h3>Надёжность расчётов</h3><div className="setting-row"><div><b>Прямые сделки</b><small>Вычисляются независимо от маршрутов</small></div><span className="toggle on">Включено</span></div><div className="setting-row"><div><b>Многоэтапные маршруты</b><small>Поиск циклов через валюты и товары</small></div><span className="toggle on">Включено</span></div><div className="setting-row"><div><b>Межсерверные различия</b><small>Не считаются исполнимыми без механизма переноса</small></div><span className="toggle on">Справочно</span></div><div className="hint-block"><ShieldCheck size={16} /> Комиссии по умолчанию равны нулю и применяются только после явной настройки. Для каждого сервера правила могут различаться.</div></div></div>
+      <div className="panel panel-pad"><h3>Надёжность расчётов</h3><div className="setting-row"><div><b>Прямые сделки</b><small>Отдельно для каждой пары магазинов</small></div><span className="toggle on">Включено</span></div><div className="setting-row"><div><b>Многоэтапные маршруты</b><small>Учитывают перемещения между магазинами</small></div><span className="toggle on">Включено</span></div><div className="setting-row"><div><b>Межсерверные различия</b><small>Не считаются исполнимыми без механизма переноса</small></div><span className="toggle on">Справочно</span></div><div className="hint-block"><ShieldCheck size={16} /> Рейтинг учитывает чистую прибыль, расстояние и глубину заявок. Расстояние — по прямой между координатами X/Z; фактический путь по дорогам и рельефу может быть длиннее.</div></div></div>
+    <div className="panel panel-pad store-logistics-panel">
+      <div className="panel-title"><div><h3>Логистика и правила хранилищ</h3><p>{stores.length} магазинов найдено в текущих предложениях</p></div><Compass size={17} className="muted-icon" /></div>
+      <div className="hint-block"><AlertTriangle size={16} /> GoodPrice не передаёт координаты магазинов. Введи их X/Z из игрового мира Eco — только после этого анализатор сможет сравнивать дистанции и выбирать короткие варианты. Без координат расстояние отмечается как неизвестное и не подменяется выдуманным.</div>
+      {stores.length ? <div className="store-config-list">{stores.map((store) => {
+        const location = settings.storeLocations?.[store.key] ?? {};
+        const accepted = settings.storeAcceptedItems?.[store.key] ?? [];
+        return <div className="store-config-row" key={store.key}>
+          <div className="store-config-heading"><div><strong>{store.storeName}</strong><small>{store.serverId}</small></div><span className="data-tag">{location.x !== undefined && location.z !== undefined ? 'Координаты заданы' : 'Нет координат'}</span></div>
+          <div className="store-coordinate-fields">
+            <label><span>X</span><input className="field" type="number" step="any" value={location.x ?? ''} onChange={(e) => setCoordinate(store.key, 'x', e.target.value)} placeholder="X мира" /></label>
+            <label><span>Z</span><input className="field" type="number" step="any" value={location.z ?? ''} onChange={(e) => setCoordinate(store.key, 'z', e.target.value)} placeholder="Z мира" /></label>
+          </div>
+          {store.restrictedItems.length > 0 && <div className="store-accepted-items"><b>Подтвердить товары, которые этот магазин действительно принимает</b><small>Отмеченные товары будут включены в исполнимые расчёты. Отмечай только после проверки склада в игре.</small><div>{store.restrictedItems.map((itemName) => <label key={itemName}><input type="checkbox" checked={accepted.includes(itemName)} onChange={(e) => toggleAcceptedItem(store.key, itemName, e.target.checked)} /><span>{itemName}</span></label>)}</div></div>}
+        </div>;
+      })}</div> : <div className="muted-empty">Магазины появятся после синхронизации GoodPrice.</div>}
+      <button className="button primary" onClick={() => void save()} disabled={saving}>{saving ? 'Сохранение…' : 'Сохранить логистику и правила'}</button>
+    </div>
   </>;
 }
