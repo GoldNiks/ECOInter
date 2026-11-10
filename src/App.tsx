@@ -163,8 +163,21 @@ function OpportunityTable({ items, compact = false, onChoose, onSimulate }: { it
 }
 function OpportunityDetails({ item, onSimulate, onClose }: { item: Opportunity; onSimulate: (id: string) => void; onClose: () => void }) {
   const currency = item.kind === 'multi_step' ? item.startCurrency : item.currency;
-  return <div className="panel panel-pad opportunity-detail">
-    <div className="panel-title"><div><div className="eyebrow">OPPORTUNITY DETAILS</div><h3>{item.kind === 'direct' ? item.itemName : item.kind === 'multi_step' ? item.legs.map((leg) => leg.itemName).join(' → ') : item.itemName}</h3><p>{item.kind === 'direct' ? 'Прямая покупка и перепродажа' : item.kind === 'multi_step' ? `Многоэтапный маршрут · ${item.operations} операции` : 'Справочное сравнение двух серверов'}</p></div><button type="button" className="icon-button" onClick={onClose} title="Закрыть"><X size={16} /></button></div>
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+  return <div className="opportunity-detail-overlay" onClick={onClose}>
+    <div className="panel panel-pad opportunity-detail" role="dialog" aria-modal="true" aria-labelledby="opportunity-detail-title" onClick={(event) => event.stopPropagation()}>
+    <div className="panel-title"><div><div className="eyebrow">OPPORTUNITY DETAILS</div><h3 id="opportunity-detail-title">{item.kind === 'direct' ? item.itemName : item.kind === 'multi_step' ? item.legs.map((leg) => leg.itemName).join(' → ') : item.itemName}</h3><p>{item.kind === 'direct' ? 'Прямая покупка и перепродажа' : item.kind === 'multi_step' ? `Многоэтапный маршрут · ${item.operations} операции` : 'Справочное сравнение двух серверов'}</p></div><button type="button" className="icon-button" onClick={onClose} title="Закрыть"><X size={16} /></button></div>
     {item.kind === 'interserver' ? <>
       <div className="hint-block"><AlertTriangle size={16} /> Это не исполнимая сделка. Анализатор видит разницу цен между серверами, но не располагает подтверждённым способом переноса товара или валюты между ними. Поэтому добавить её в симуляцию нельзя.</div>
       <div className="opportunity-detail-grid"><div><span>Покупка</span><b>{item.referenceBuyCost} {item.currency}</b><small>{item.buyServerId}</small></div><div><span>Продажа</span><b>{item.referenceSellRevenue} {item.currency}</b><small>{item.sellServerId}</small></div><div><span>Разница цен</span><b>{item.priceGap} {item.currency}</b></div><div><span>Количество</span><b>{item.quantity} ед.</b></div></div>
@@ -176,6 +189,7 @@ function OpportunityDetails({ item, onSimulate, onClose }: { item: Opportunity; 
       <div className="route-step-list">{item.legs.map((leg,index)=><div className="route-step" key={`${leg.buyOfferId}-${leg.sellOfferId}-${index}`}><div className="step-number">{index+1}</div><div className="step-content"><strong>{leg.itemName}</strong><small>Купить {leg.quantity} ед. за {leg.buyCost} {leg.fromCurrency}</small><small>Продать за {leg.sellRevenue} {leg.toCurrency}</small>{(leg.buyOfferIds.length>1||leg.sellOfferIds.length>1)&&<small>Объединено заявок: покупка {leg.buyOfferIds.length}, приём {leg.sellOfferIds.length}</small>}</div><div className="step-balance"><span>Баланс после этапа</span><b>{leg.outputBalance} {leg.toCurrency}</b></div></div>)}</div>
     </>}
     {item.kind !== 'interserver' && <div className="opportunity-detail-actions"><button type="button" className="button primary" onClick={() => onSimulate(item.id)}><Activity size={14} /> Выбрать для симуляции</button><span className="muted-text">Создаётся виртуальный сценарий. Игровые ордера не отправляются.</span></div>}
+    </div>
   </div>;
 }
 function OpportunitiesPage({ items, loading, onSimulate }: { items: Opportunity[]; loading: boolean; onSimulate: (id: string) => void }) {
