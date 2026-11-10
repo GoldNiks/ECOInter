@@ -141,27 +141,30 @@ function Dashboard({ dashboard, opportunities, servers, loading, setPage }: { da
 function statusLabel(status: string) { return ({ imported_normalized: 'Рынок синхронизирован', api_verified: 'API подтверждён · ожидает синхронизации', auth_required: 'Нужен world ticket', auth_failed: 'Токен отклонён или истёк', sync_error: 'Ошибка синхронизации', reachable_unverified: 'Адрес отвечает · API не проверен', unavailable: 'Недоступен', not_checked: 'Не проверен' } as Record<string, string>)[status] ?? status; }
 function Loading() { return <div className="loading"><LoaderCircle className="spin" size={20} /> Загрузка данных…</div>; }
 function EmptyState({ icon: Icon, title, text, action }: { icon: typeof Activity; title: string; text: string; action?: React.ReactNode }) { return <div className="empty-state"><div className="empty-icon"><Icon size={22} /></div><h3>{title}</h3><p>{text}</p>{action}</div>; }
-function OpportunityTable({ items, compact = false, onChoose }: { items: Opportunity[]; compact?: boolean; onChoose?: (item: Opportunity) => void }) {
+function OpportunityTable({ items, compact = false, onChoose, onSimulate }: { items: Opportunity[]; compact?: boolean; onChoose?: (item: Opportunity) => void; onSimulate?: (id: string) => void }) {
   return <div className="table-scroll"><table><thead><tr><th>Возможность</th><th>Тип</th><th>Маршрут / сервер</th><th>Капитал</th><th>Результат</th><th>Доходность</th><th>Данные</th>{onChoose && <th>Действие</th>}</tr></thead><tbody>{items.map((item) => {
     const name = item.kind === 'direct' ? item.itemName : item.kind === 'multi_step' ? item.legs.map((l) => l.itemName).join(' → ') : item.itemName;
     const profit = item.kind === 'interserver' ? item.priceGap : item.netProfit;
     const capital = item.kind === 'multi_step' ? `${item.initialCapital} ${item.startCurrency}` : item.kind === 'direct' ? `${item.buyCost} ${item.currency}` : `${item.referenceBuyCost} ${item.currency}`;
     const currency = item.kind === 'multi_step' ? item.startCurrency : item.currency;
     const roi = item.kind === 'interserver' ? 'справочно' : `${fmt(item.roiPercent)}%`;
-    return <tr key={item.id} className={onChoose ? 'opportunity-row' : undefined}>
+    return <tr key={item.id} className={onChoose ? 'opportunity-row' : undefined} onClick={onChoose ? () => onChoose(item) : undefined}>
       <td><strong>{name}</strong><small>{item.kind === 'multi_step' ? `${item.legs.length} товара · ${item.operations} операции` : `${item.quantity} ед.`}</small></td>
       <td><span className={`type-pill ${item.kind}`}>{item.kind === 'direct' ? 'Прямая' : item.kind === 'multi_step' ? 'Маршрут' : 'Разница цен'}</span></td>
       <td>{item.kind === 'direct' ? item.serverId : item.kind === 'multi_step' ? `${item.startCurrency} → ${item.endCurrency}` : `${item.buyServerId} → ${item.sellServerId}`}</td>
       <td className="mono">{capital}</td><td><strong className={item.kind === 'interserver' ? 'mono' : 'positive mono'}>{item.kind === 'interserver' ? '' : '+'}{fmt(profit)} {currency}</strong></td>
       <td className="mono">{roi}</td><td><span className="data-tag">{item.kind === 'interserver' ? 'Перенос не подтверждён' : item.quoteKind === 'listing' ? 'Предложения' : 'Оценка'}</span></td>
-      {onChoose && <td><button className="text-button opportunity-open" onClick={() => onChoose(item)}>Подробнее <ArrowUpRight size={13} /></button></td>}
+      {onChoose && <td><div className="opportunity-row-actions">
+        <button type="button" className="button secondary small" onClick={(event) => { event.stopPropagation(); onChoose(item); }}>Открыть</button>
+        {item.kind !== 'interserver' && <button type="button" className="button primary small" onClick={(event) => { event.stopPropagation(); onSimulate?.(item.id); }}>В симуляцию</button>}
+      </div></td>}
     </tr>;
   })}</tbody></table></div>;
 }
 function OpportunityDetails({ item, onSimulate, onClose }: { item: Opportunity; onSimulate: (id: string) => void; onClose: () => void }) {
   const currency = item.kind === 'multi_step' ? item.startCurrency : item.currency;
   return <div className="panel panel-pad opportunity-detail">
-    <div className="panel-title"><div><div className="eyebrow">OPPORTUNITY DETAILS</div><h3>{item.kind === 'direct' ? item.itemName : item.kind === 'multi_step' ? item.legs.map((leg) => leg.itemName).join(' → ') : item.itemName}</h3><p>{item.kind === 'direct' ? 'Прямая покупка и перепродажа' : item.kind === 'multi_step' ? `Многоэтапный маршрут · ${item.operations} операции` : 'Справочное сравнение двух серверов'}</p></div><button className="icon-button" onClick={onClose} title="Закрыть"><X size={16} /></button></div>
+    <div className="panel-title"><div><div className="eyebrow">OPPORTUNITY DETAILS</div><h3>{item.kind === 'direct' ? item.itemName : item.kind === 'multi_step' ? item.legs.map((leg) => leg.itemName).join(' → ') : item.itemName}</h3><p>{item.kind === 'direct' ? 'Прямая покупка и перепродажа' : item.kind === 'multi_step' ? `Многоэтапный маршрут · ${item.operations} операции` : 'Справочное сравнение двух серверов'}</p></div><button type="button" className="icon-button" onClick={onClose} title="Закрыть"><X size={16} /></button></div>
     {item.kind === 'interserver' ? <>
       <div className="hint-block"><AlertTriangle size={16} /> Это не исполнимая сделка. Анализатор видит разницу цен между серверами, но не располагает подтверждённым способом переноса товара или валюты между ними. Поэтому добавить её в симуляцию нельзя.</div>
       <div className="opportunity-detail-grid"><div><span>Покупка</span><b>{item.referenceBuyCost} {item.currency}</b><small>{item.buyServerId}</small></div><div><span>Продажа</span><b>{item.referenceSellRevenue} {item.currency}</b><small>{item.sellServerId}</small></div><div><span>Разница цен</span><b>{item.priceGap} {item.currency}</b></div><div><span>Количество</span><b>{item.quantity} ед.</b></div></div>
@@ -172,7 +175,7 @@ function OpportunityDetails({ item, onSimulate, onClose }: { item: Opportunity; 
       <div className="opportunity-detail-grid"><div><span>Стартовый капитал</span><b>{item.initialCapital} {currency}</b></div><div><span>Конечный капитал</span><b className="positive">{item.finalCapital} {currency}</b></div><div><span>Чистая прибыль</span><b className="positive">+{item.netProfit} {currency}</b></div><div><span>Доходность</span><b>{fmt(item.roiPercent)}%</b></div><div><span>Сервер</span><b>{item.serverId}</b></div><div><span>Источник</span><b>{item.quoteKind === 'listing' ? 'Рыночные заявки' : 'Справочная оценка'}</b></div></div>
       <div className="route-step-list">{item.legs.map((leg,index)=><div className="route-step" key={`${leg.buyOfferId}-${leg.sellOfferId}-${index}`}><div className="step-number">{index+1}</div><div className="step-content"><strong>{leg.itemName}</strong><small>Купить {leg.quantity} ед. за {leg.buyCost} {leg.fromCurrency}</small><small>Продать за {leg.sellRevenue} {leg.toCurrency}</small>{(leg.buyOfferIds.length>1||leg.sellOfferIds.length>1)&&<small>Объединено заявок: покупка {leg.buyOfferIds.length}, приём {leg.sellOfferIds.length}</small>}</div><div className="step-balance"><span>Баланс после этапа</span><b>{leg.outputBalance} {leg.toCurrency}</b></div></div>)}</div>
     </>}
-    {item.kind !== 'interserver' && <div className="opportunity-detail-actions"><button className="button primary" onClick={() => onSimulate(item.id)}><Activity size={14} /> Выбрать для симуляции</button><span className="muted-text">Создаётся виртуальный сценарий. Игровые ордера не отправляются.</span></div>}
+    {item.kind !== 'interserver' && <div className="opportunity-detail-actions"><button type="button" className="button primary" onClick={() => onSimulate(item.id)}><Activity size={14} /> Выбрать для симуляции</button><span className="muted-text">Создаётся виртуальный сценарий. Игровые ордера не отправляются.</span></div>}
   </div>;
 }
 function OpportunitiesPage({ items, loading, onSimulate }: { items: Opportunity[]; loading: boolean; onSimulate: (id: string) => void }) {
@@ -183,7 +186,7 @@ function OpportunitiesPage({ items, loading, onSimulate }: { items: Opportunity[
   const selected = filtered.find((item) => item.id === selectedId) ?? null;
   return <><PageHeading eyebrow="LIVE SCANNER" title="Торговые возможности" text="Откройте строку, чтобы посмотреть расчёт. Прямые сделки и маршруты можно отправить в симуляцию." action={<div className="search-box"><Search size={15} /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск по товару…" /></div>} />
     <div className="toolbar"><div className="segmented">{[['all', 'Все'], ['direct', 'Прямые сделки'], ['multi_step', 'Маршруты'], ['interserver', 'Разница серверов']].map(([key, label]) => <button key={key} className={filter === key ? 'selected' : ''} onClick={() => setFilter(key)}>{label}</button>)}</div><div className="toolbar-meta"><ListFilter size={14} /> {filtered.length} результатов · {filtered.filter((x) => x.kind !== 'interserver').length} доступны для симуляции</div></div>
-    <div className="panel">{loading ? <Loading /> : filtered.length ? <OpportunityTable items={filtered} onChoose={(item) => setSelectedId(item.id)} /> : <EmptyState icon={Search} title="Ничего не найдено" text="Проверьте фильтр или импортируйте рыночные предложения." />}</div>
+    <div className="panel">{loading ? <Loading /> : filtered.length ? <OpportunityTable items={filtered} onChoose={(item) => setSelectedId(item.id)} onSimulate={onSimulate} /> : <EmptyState icon={Search} title="Ничего не найдено" text="Проверьте фильтр или импортируйте рыночные предложения." />}</div>
     {selected && <OpportunityDetails item={selected} onSimulate={onSimulate} onClose={() => setSelectedId('')} />}
   </>;
 }
