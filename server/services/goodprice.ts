@@ -14,6 +14,10 @@ export const normalizedSnapshotSchema = z.object({
     quantity: z.number().int().positive().max(1_000_000),
     quoteKind: z.enum(['listing', 'reference']), observedAt: z.string().datetime(),
     sourceId: z.string().optional(),
+    storeId: z.string().optional(),
+    storeName: z.string().optional(),
+    tradeAllowed: z.boolean().optional(),
+    tradeRestriction: z.string().optional(),
   })),
 });
 
@@ -103,6 +107,29 @@ async function requestStores(configuredUrl: string, token?: string, timeoutMs = 
 function cleanName(value: unknown): string {
   return typeof value === 'string' ? value.replace(COLOR_TAG, '').trim() : '';
 }
+
+const PROFESSIONAL_MARKETS = [
+  { key: 'hunter', label: 'охотничий рынок', match: /hunter|hunting|охотнич|охотник/iu },
+  { key: 'farmer', label: 'фермерский рынок', match: /farmer|farming|фермер/iu },
+  { key: 'chef', label: 'рынок повара', match: /chef|cooking|повар|кулинар/iu },
+  { key: 'smith', label: 'кузнечный рынок', match: /smith|кузнец/iu },
+  { key: 'carpenter', label: 'столярный рынок', match: /carpenter|плотник|столяр/iu },
+  { key: 'mason', label: 'рынок каменщика', match: /mason|каменщик/iu },
+  { key: 'engineer', label: 'рынок инженера', match: /engineer|инженер/iu },
+  { key: 'tailor', label: 'портняжный рынок', match: /tailor|портной/iu },
+] as const;
+
+function professionalMarket(name: string) {
+  // Do not classify ordinary player shops that merely mention a profession.
+  if (!/(market|рынок|рынк|marketmod)/iu.test(name)) return undefined;
+  return PROFESSIONAL_MARKETS.find((profile) => profile.match.test(name));
+}
+
+function deterministicStoreId(serverId: string, storeIndex: number, name: string, owner: string): string {
+  return createHash('sha256')
+    .update(`${serverId}\\0${storeIndex}\\0${name}\\0${owner}`)
+    .digest('hex').slice(0, 32);
+}
 function positiveInt(value: unknown): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 1_000_000 ? parsed : 0;
@@ -142,6 +169,8 @@ export function normalizeGoodPriceStores(payload: Record<string, unknown>, serve
     const storeName = cleanName(store.Name);
     const owner = cleanName(store.Owner);
     const currency = cleanName(store.CurrencyName);
+    const profile = professionalMarket(storeName);
+    const storeId = deterministicStoreId(serverId, storeIndex, storeName, owner);
     if (!storeName || !currency || !Array.isArray(store.AllOffers)) return;
     const balanceRaw = store.Balance;
     const balanceText = String(balanceRaw ?? '').trim().toLowerCase();
@@ -163,9 +192,15 @@ export function normalizeGoodPriceStores(payload: Record<string, unknown>, serve
       const totalPrice = unitPrice * BigInt(requested);
       offers.push({
         id: deterministicOfferId(serverId, storeIndex, offerIndex, itemName, action),
-        serverId, itemId: itemName, itemName, action, currency,
+        serverId, storeId, storeName, itemId: itemName, itemName, action, currency,
         totalPrice: scaledToString(totalPrice), quantity: requested,
         quoteKind: 'listing', observedAt: capturedAt, sourceId: 'GoodPrice',
+        // Buying=true means the player deposits the item into this market.
+        // Professional-market add-ons may reject items outside the profession's storage rules.
+        tradeAllowed: !(buying && profile),
+        tradeRestriction: buying && profile
+          ? `Заявка исключена из исполнимых расчётов: ${profile.label} может принимать только товары своей профессии; совместимость «${itemName}» с хранилищем не подтверждена.`
+          : undefined,
       });
     });
   });
