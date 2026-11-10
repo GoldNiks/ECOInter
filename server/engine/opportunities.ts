@@ -351,7 +351,9 @@ export function findMultiStepRoutesDetailed(
     const initial = explicitCapital !== undefined
       ? money(explicitCapital)
       : outgoing.reduce((max, edge) => {
-          const required = add(money(edge.buy.totalPrice), add(percentOfSafe(money(edge.buy.totalPrice), money(feePolicy(options, edge.serverId).buyPercent)), money(feePolicy(options, edge.serverId).buyFixed)));
+          const buyCost = buyBookCost(edge.buyOffers, edge.capacity).total;
+          const fees = feePolicy(options, edge.serverId);
+          const required = add(buyCost, add(percentOfSafe(buyCost, money(fees.buyPercent)), money(fees.buyFixed)));
           return required > max ? required : max;
         }, ZERO);
     if (initial <= ZERO) continue;
